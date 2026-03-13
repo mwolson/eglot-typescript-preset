@@ -1,0 +1,37 @@
+# melpazoid <https://github.com/riscy/melpazoid> build checks.
+
+name: melpazoid
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: ".python-version"
+      - name: Install Emacs and Melpazoid
+        run: |
+          python -m pip install --upgrade pip
+          sudo apt-get install emacs && emacs --version
+          git clone https://github.com/riscy/melpazoid.git ~/melpazoid
+          pip install ~/melpazoid
+      - name: Install test dependencies
+        run: bun install
+      - name: Check
+        run: bun run check
+      - name: Test
+        run: bun run test
+      - name: Run Melpazoid
+        run: |
+          RECIPE="$(tr '\n' ' ' < eglot-typescript-preset.recipe)"
+          export LOCAL_REPO="${{ github.workspace }}"
+          export RECIPE
+          export EXIST_OK=true
+          echo "$GITHUB_REF"
+          make -C ~/melpazoid

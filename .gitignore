@@ -1,0 +1,23 @@
+.DS_Store
+node_modules
+
+# Compiled
+*.elc
+
+# Packaging
+.cask/
+.eask/
+.eldev/
+.keg/
+
+# Built distribution
+dist/
+
+# Backup files
+*~
+
+# Temp files
+tmp/
+
+# Undo-tree save-files
+*.~undo-tree

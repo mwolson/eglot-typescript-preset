@@ -1,0 +1,25 @@
+.common-excludes: &common_excludes
+  - "/test"
+  - "**/node_modules"
+
+pre-commit:
+  parallel: true
+  output: true
+  commands:
+    check:
+      priority: 2
+      glob: "eglot-typescript-preset.el"
+      exclude: *common_excludes
+      run: mise x -- bun run check
+    md-format:
+      priority: 1
+      glob: "*.md"
+      exclude: *common_excludes
+      run: mise x -- bun run fix:md:file {staged_files}
+      stage_fixed: true
+    yaml-format:
+      priority: 1
+      glob: "*.yaml"
+      exclude: *common_excludes
+      run: mise x -- bun run fix:yaml:file {staged_files}
+      stage_fixed: true

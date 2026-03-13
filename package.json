@@ -1,0 +1,33 @@
+{
+  "name": "eglot-typescript-preset",
+  "version": "0.1.0",
+  "description": "TypeScript LSP preset for Emacs using Eglot",
+  "type": "module",
+  "keywords": [],
+  "author": "",
+  "license": "GPL-3.0",
+  "scripts": {
+    "byte-compile": "./scripts/byte-compile.sh",
+    "check": "./scripts/byte-compile.sh --check",
+    "check:doc": "./scripts/checkdoc.sh",
+    "check:melpa": "./scripts/melpa-check.sh",
+    "check:melpa:install": "./scripts/melpa-build-install-check.sh",
+    "check:package-lint": "./scripts/package-lint.sh",
+    "init": "bun run up && bun run init:hooks",
+    "init:hooks": "lefthook install",
+    "fix:md": "prettier --write '**/*.md'",
+    "fix:md:file": "prettier --write",
+    "fix:yaml": "prettier --write '**/*.yaml'",
+    "fix:yaml:file": "prettier --write",
+    "hooks:pre-commit": "lefthook run pre-commit",
+    "hooks:pre-commit:all": "lefthook run pre-commit --all-files",
+    "test": "emacs -Q --batch -l eglot-typescript-preset.el -l test/test.el -f ert-run-tests-batch-and-exit",
+    "test:live": "emacs -Q --batch -l eglot-typescript-preset.el -l test/test.el --eval \"(setq my-test-run-live-tests t)\" -f ert-run-tests-batch-and-exit",
+    "up": "mise use -g bun@latest && mise install && bun install"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "lefthook": "^2.0.13",
+    "prettier": "^3.7.4"
+  }
+}
