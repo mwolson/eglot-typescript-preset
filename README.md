@@ -107,8 +107,14 @@ resolution:
         '(typescript-language-server eslint)) ; default
 ```
 
-Available symbolic tools: `typescript-language-server`, `eslint`, `biome`,
-`oxlint`, `oxfmt`, `astro-ls`.
+Available symbolic tools:
+
+- `astro-ls`.
+- `biome`
+- `eslint`
+- `oxfmt`
+- `oxlint`
+- `typescript-language-server`
 
 You can also pass literal command vectors:
 
