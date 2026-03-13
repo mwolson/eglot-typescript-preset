@@ -1,15 +1,16 @@
 # eglot-typescript-preset
 
-Configures TypeScript, JavaScript, and Astro LSP support for Emacs using
+Configures TypeScript, JavaScript, Astro, and Vue LSP support for Emacs using
 [Eglot](https://github.com/joaotavora/eglot), with optional linter and formatter
 integration via [rassumfrassum](https://github.com/joaotavora/rassumfrassum).
 
 This package configures Eglot to work with TypeScript and JavaScript files using
-[typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
-or [rassumfrassum](https://github.com/joaotavora/rassumfrassum) as the language
+[typescript-language-server](https://github.com/typescript-language-server/typescript-language-server),
+[deno](https://deno.land/), or
+[rassumfrassum](https://github.com/joaotavora/rassumfrassum) as the language
 server frontend. It supports combining multiple tools -- ESLint, Biome, oxlint,
-and oxfmt -- through generated `rass` presets, and includes Astro support via
-[@astrojs/language-server](https://github.com/withastro/language-tools).
+and oxfmt -- through generated `rass` presets, and includes Astro and Vue
+support via their respective language servers.
 
 ## Prerequisites
 
@@ -17,6 +18,7 @@ and oxfmt -- through generated `rass` presets, and includes Astro support via
 - One of the following for TypeScript/JavaScript:
   - [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
     -- the standard TypeScript LSP
+  - [deno](https://deno.land/) -- Deno's built-in LSP (`deno lsp`)
   - [rassumfrassum](https://github.com/joaotavora/rassumfrassum) (>= v0.3.3) --
     optional stdio multiplexer for combining multiple tools
 - Optional linters and formatters (used with `rass` backend):
@@ -24,14 +26,20 @@ and oxfmt -- through generated `rass` presets, and includes Astro support via
   - [eslint](https://eslint.org/) via `vscode-eslint-language-server`
   - [oxfmt](https://oxc.rs/docs/guide/usage/formatter.html) -- fast formatter
   - [oxlint](https://oxc.rs/docs/guide/usage/linter.html) -- fast linter
+  - [tailwindcss-language-server](https://github.com/tailwindlabs/tailwindcss-intellisense)
+    -- Tailwind CSS support
 - Optional for Astro:
   - [@astrojs/language-server](https://github.com/withastro/language-tools)
     (provides the `astro-ls` command)
+- Optional for Vue:
+  - [@vue/language-server](https://github.com/vuejs/language-tools) (provides
+    the `vue-language-server` command)
 
 ## Installation
 
 Choose one of the following ways to install. After that, opening TypeScript,
-JavaScript, or Astro files will automatically start the LSP server using Eglot.
+JavaScript, Astro, or Vue files will automatically start the LSP server using
+Eglot.
 
 ### From MELPA (recommended)
 
@@ -66,11 +74,37 @@ For standard projects (those with `package.json`, `tsconfig.json`, or
 `jsconfig.json`), the package automatically detects the project root and starts
 Eglot with appropriate configuration.
 
+### Deno Projects
+
+Set the LSP server to `deno` for projects that use Deno instead of Node.js:
+
+```elisp
+(setopt eglot-typescript-preset-lsp-server 'deno)
+```
+
+This starts `deno lsp` with `enable` and `lint` enabled. Per-project
+configuration via `.dir-locals.el` is also supported (see below).
+
 ### Astro Projects
 
 When `eglot-typescript-preset-astro-lsp-server` is set (default: `astro-ls`),
 the package also configures Eglot for `astro-ts-mode` buffers, including
 automatic TypeScript SDK detection for the Astro language server.
+
+### Vue Projects
+
+When `eglot-typescript-preset-vue-lsp-server` is set (default:
+`vue-language-server`), the package configures Eglot for `vue-mode` and
+`vue-ts-mode` buffers. The Vue language server receives TypeScript SDK path and
+`vue.hybridMode` initialization options automatically.
+
+For Vue projects using Tailwind CSS with the `rass` backend:
+
+```elisp
+(setopt eglot-typescript-preset-vue-lsp-server 'rass)
+(setopt eglot-typescript-preset-vue-rass-tools
+        '(vue-language-server tailwindcss-language-server)) ; default
+```
 
 ## Configuration
 
@@ -80,6 +114,8 @@ Choose which language server to use for TypeScript/JavaScript:
 
 ```elisp
 (setopt eglot-typescript-preset-lsp-server 'typescript-language-server) ; default
+;; or
+(setopt eglot-typescript-preset-lsp-server 'deno)
 ;; or
 (setopt eglot-typescript-preset-lsp-server 'rass)
 ```
@@ -96,6 +132,18 @@ Choose which language server to use for Astro:
 (setopt eglot-typescript-preset-astro-lsp-server nil) ; disable Astro support
 ```
 
+### `eglot-typescript-preset-vue-lsp-server`
+
+Choose which language server to use for Vue:
+
+```elisp
+(setopt eglot-typescript-preset-vue-lsp-server 'vue-language-server) ; default
+;; or
+(setopt eglot-typescript-preset-vue-lsp-server 'rass)
+;; or
+(setopt eglot-typescript-preset-vue-lsp-server nil) ; disable Vue support
+```
+
 ### `eglot-typescript-preset-rass-tools`
 
 When using the `rass` backend, this list controls the generated preset for
@@ -109,12 +157,14 @@ resolution:
 
 Available symbolic tools:
 
-- `astro-ls`.
+- `astro-ls`
 - `biome`
 - `eslint`
 - `oxfmt`
 - `oxlint`
+- `tailwindcss-language-server`
 - `typescript-language-server`
+- `vue-language-server`
 
 You can also pass literal command vectors:
 
@@ -134,6 +184,15 @@ Same as above, but for Astro files:
         '(astro-ls eslint)) ; default
 ```
 
+### `eglot-typescript-preset-vue-rass-tools`
+
+Same as above, but for Vue files:
+
+```elisp
+(setopt eglot-typescript-preset-vue-rass-tools
+        '(vue-language-server tailwindcss-language-server)) ; default
+```
+
 ### `eglot-typescript-preset-rass-command`
 
 Bypass the generated preset entirely with an exact `rass` command vector:
@@ -150,10 +209,19 @@ Same as above, but for Astro files:
 (setopt eglot-typescript-preset-astro-rass-command ["rass" "tslint"])
 ```
 
+### `eglot-typescript-preset-vue-rass-command`
+
+Same as above, but for Vue files:
+
+```elisp
+(setopt eglot-typescript-preset-vue-rass-command ["rass" "vuetail"])
+```
+
 ### `eglot-typescript-preset-tsdk`
 
 Path to the TypeScript SDK `lib` directory. When nil (default), the package
-attempts to find it automatically via `npm root -g`:
+attempts to find it automatically via `npm root -g`. Used by both the Astro and
+Vue language servers:
 
 ```elisp
 (setopt eglot-typescript-preset-tsdk "/path/to/node_modules/typescript/lib")
@@ -186,6 +254,14 @@ Major modes for Astro files:
 (setopt eglot-typescript-preset-astro-modes '(astro-ts-mode)) ; default
 ```
 
+### `eglot-typescript-preset-vue-modes`
+
+Major modes for Vue files:
+
+```elisp
+(setopt eglot-typescript-preset-vue-modes '(vue-mode vue-ts-mode)) ; default
+```
+
 ### `eglot-typescript-preset-rass-max-contextual-presets`
 
 Contextual `rass` presets are the ones that embed project-local state, such as a
@@ -215,11 +291,14 @@ prompting:
      (eglot-typescript-preset-rass-tools . (typescript-language-server biome)))))
 ```
 
-`eglot-typescript-preset-lsp-server` accepts `typescript-language-server` or
-`rass`. `eglot-typescript-preset-astro-lsp-server` accepts `astro-ls`, `rass`,
-or `nil`. `eglot-typescript-preset-rass-tools` and
-`eglot-typescript-preset-astro-rass-tools` accept lists of known tool symbols
-(`typescript-language-server`, `astro-ls`, `biome`, `eslint`, `oxlint`,
+`eglot-typescript-preset-lsp-server` accepts `typescript-language-server`,
+`deno`, or `rass`. `eglot-typescript-preset-astro-lsp-server` accepts
+`astro-ls`, `rass`, or `nil`. `eglot-typescript-preset-vue-lsp-server` accepts
+`vue-language-server`, `rass`, or `nil`. `eglot-typescript-preset-rass-tools`,
+`eglot-typescript-preset-astro-rass-tools`, and
+`eglot-typescript-preset-vue-rass-tools` accept lists of known tool symbols
+(`typescript-language-server`, `vue-language-server`,
+`tailwindcss-language-server`, `astro-ls`, `biome`, `eslint`, `oxlint`,
 `oxfmt`). `eglot-typescript-preset-js-project-markers` accepts lists of filename
 strings.
 
@@ -253,14 +332,14 @@ project.
   automatically.
 - If you use the `rass` backend, the package generates a preset under your Emacs
   directory and updates it as needed. Context-free presets are reused across
-  buffers, while project-local `node_modules` and Astro TSDK cases keep separate
-  generated files.
+  buffers, while project-local `node_modules` and Astro/Vue TSDK cases keep
+  separate generated files.
 
 ## Notes
 
 - For standard projects, the package prefers executables from a project-root
   `node_modules/.bin` and otherwise falls back to PATH. The same resolution is
   used for supported tools in generated `rass` presets.
-- The Astro language server requires a TypeScript SDK path. The package tries to
-  detect it via `npm root -g`, or you can set `eglot-typescript-preset-tsdk`
-  explicitly.
+- The Astro and Vue language servers require a TypeScript SDK path. The package
+  tries to detect it via `npm root -g`, or you can set
+  `eglot-typescript-preset-tsdk` explicitly.

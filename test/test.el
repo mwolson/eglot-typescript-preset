@@ -67,6 +67,10 @@
          '(typescript-language-server eslint))
         (eglot-typescript-preset-astro-rass-tools
          '(astro-ls eslint))
+        (eglot-typescript-preset-vue-lsp-server 'vue-language-server)
+        (eglot-typescript-preset-vue-rass-command nil)
+        (eglot-typescript-preset-vue-rass-tools
+         '(vue-language-server tailwindcss-language-server))
         (eglot-typescript-preset-rass-max-contextual-presets 50)
         (eglot-typescript-preset-tsdk nil)
         (eglot-typescript-preset-js-project-markers
@@ -75,6 +79,7 @@
          '(jtsx-jsx-mode jtsx-tsx-mode jtsx-typescript-mode
            js-mode js-ts-mode typescript-ts-mode tsx-ts-mode))
         (eglot-typescript-preset-astro-modes '(astro-ts-mode))
+        (eglot-typescript-preset-vue-modes '(vue-mode vue-ts-mode))
         (user-emacs-directory (file-name-as-directory tmp-dir)))
     (funcall fn)))
 
@@ -218,6 +223,14 @@
               'oxfmt))
   (should (eq (eglot-typescript-preset--tool-kind-from-name "astro-ls")
               'astro-ls))
+  (should (eq (eglot-typescript-preset--tool-kind-from-name "deno")
+              'deno))
+  (should (eq (eglot-typescript-preset--tool-kind-from-name
+               "tailwindcss-language-server")
+              'tailwindcss-language-server))
+  (should (eq (eglot-typescript-preset--tool-kind-from-name
+               "vue-language-server")
+              'vue-language-server))
   (should-not (eglot-typescript-preset--tool-kind-from-name "unknown-tool"))
   (should-not (eglot-typescript-preset--tool-kind-from-name nil)))
 
@@ -267,6 +280,22 @@
       (let ((cmd (eglot-typescript-preset--rass-tool-command 'astro-ls)))
         (should (equal (cadr cmd) "--stdio"))))))
 
+(ert-deftest ts-preset--rass-tool-command-tailwindcss ()
+  "Generate tailwindcss-language-server command."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let ((cmd (eglot-typescript-preset--rass-tool-command
+                  'tailwindcss-language-server)))
+        (should (equal (cadr cmd) "--stdio"))))))
+
+(ert-deftest ts-preset--rass-tool-command-vue ()
+  "Generate vue-language-server command."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let ((cmd (eglot-typescript-preset--rass-tool-command
+                  'vue-language-server)))
+        (should (equal (cadr cmd) "--stdio"))))))
+
 (ert-deftest ts-preset--rass-tool-command-vector ()
   "Pass through vector commands with executable resolution."
   (my-test-with-tmp-dir tmp-dir
@@ -299,7 +328,13 @@
   (should (string= (eglot-typescript-preset--rass-tool-label 'oxfmt)
                     "oxfmt"))
   (should (string= (eglot-typescript-preset--rass-tool-label 'astro-ls)
-                    "astro-ls")))
+                    "astro-ls"))
+  (should (string= (eglot-typescript-preset--rass-tool-label
+                     'tailwindcss-language-server)
+                    "tailwindcss-language-server"))
+  (should (string= (eglot-typescript-preset--rass-tool-label
+                     'vue-language-server)
+                    "vue-language-server")))
 
 (ert-deftest ts-preset--rass-tool-label-vector-single ()
   "Generate label from single-element vector."
@@ -368,7 +403,7 @@
                          (insert-file-contents path)
                          (buffer-string))))
           (should (string-match-p "SERVERS" content))
-          (should (string-match-p "ASTRO_INIT_OPTIONS = None" content))
+          (should (string-match-p "INIT_OPTIONS = None" content))
           (should (string-match-p "ESLINT_LOGIC = False" content)))))))
 
 (ert-deftest ts-preset--write-rass-preset-with-eslint ()
@@ -563,16 +598,20 @@
                (result (json-parse-string output :object-type 'alist)))
           (let-alist result
             (should (equal .eslintLogic :false))
-            (should (equal .astroInitOptions :null))
+            (should (equal .initOptions :null))
             (should .hasLogicClass)
             (let-alist .serverKind
               (should (equal .typescript-language-server
                              "typescript-language-server"))
               (should (equal .biome "biome"))
+              (should (equal .deno "deno"))
               (should (equal .eslint "eslint"))
               (should (equal .oxlint "oxlint"))
               (should (equal .oxfmt "oxfmt"))
               (should (equal .astro-ls "astro-ls"))
+              (should (equal .tailwindcss-language-server
+                             "tailwindcss-language-server"))
+              (should (equal .vue-language-server "vue-language-server"))
               (should (equal .unknown :null)))))))))
 
 (ert-deftest ts-preset--template-unit-eslint ()
@@ -608,8 +647,26 @@
                                 (shell-quote-argument path))))
                (result (json-parse-string output :object-type 'alist)))
           (let-alist result
-            (should (not (equal .astroInitOptions :null)))
+            (should (not (equal .initOptions :null)))
             (should (not (equal .eslintLogic :false)))))))))
+
+(ert-deftest ts-preset--template-unit-vue ()
+  "Validate template with Vue init options."
+  (skip-unless (executable-find "python3"))
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let* ((eglot-typescript-preset-tsdk "/fake/lib")
+             (tools '(vue-language-server tailwindcss-language-server))
+             (path (eglot-typescript-preset--rass-preset-path tools nil)))
+        (should path)
+        (let* ((output (shell-command-to-string
+                        (format "python3 %s %s"
+                                (shell-quote-argument my-test-rass-template-unit)
+                                (shell-quote-argument path))))
+               (result (json-parse-string output :object-type 'alist)))
+          (let-alist result
+            (should (not (equal .initOptions :null)))
+            (should (equal .eslintLogic :false))))))))
 
 
 ;;; --- Server contact tests ---
@@ -642,6 +699,17 @@
             (eglot-typescript-preset-rass-command ["rass" "tslint"]))
         (let ((contact (eglot-typescript-preset--server-contact nil)))
           (should (equal contact '("rass" "tslint"))))))))
+
+(ert-deftest ts-preset--server-contact-deno ()
+  "Server contact returns deno lsp command with init options."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let ((eglot-typescript-preset-lsp-server 'deno))
+        (let ((contact (eglot-typescript-preset--server-contact nil)))
+          (should (listp contact))
+          (should (string-match-p "deno" (car contact)))
+          (should (equal (cadr contact) "lsp"))
+          (should (member :initializationOptions contact)))))))
 
 
 ;;; --- Astro server contact tests ---
@@ -677,6 +745,62 @@
           (should (equal contact '("rass" "/custom/preset.py"))))))))
 
 
+;;; --- Vue server contact tests ---
+
+(ert-deftest ts-preset--vue-server-contact-basic ()
+  "Vue server contact returns vue-language-server with init options."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let ((eglot-typescript-preset-tsdk "/fake/tsdk"))
+        (let ((contact (eglot-typescript-preset--vue-server-contact nil)))
+          (should (listp contact))
+          (should (string-match-p "vue-language-server" (car contact)))
+          (should (member :initializationOptions contact)))))))
+
+(ert-deftest ts-preset--vue-server-contact-rass ()
+  "Vue server contact returns rass command when configured."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let ((eglot-typescript-preset-vue-lsp-server 'rass)
+            (eglot-typescript-preset-tsdk "/fake/tsdk"))
+        (let ((contact (eglot-typescript-preset--vue-server-contact nil)))
+          (should (listp contact))
+          (should (string-match-p "rass" (car contact))))))))
+
+(ert-deftest ts-preset--vue-server-contact-rass-command ()
+  "Vue server contact uses rass-command verbatim."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let ((eglot-typescript-preset-vue-lsp-server 'rass)
+            (eglot-typescript-preset-vue-rass-command
+             ["rass" "vuetail"]))
+        (let ((contact (eglot-typescript-preset--vue-server-contact nil)))
+          (should (equal contact '("rass" "vuetail"))))))))
+
+(ert-deftest ts-preset--vue-init-options-with-tsdk ()
+  "Vue init options include tsdk and hybridMode."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let ((eglot-typescript-preset-tsdk "/my/typescript/lib"))
+        (let ((opts (eglot-typescript-preset--vue-init-options)))
+          (should (equal (plist-get (plist-get opts :typescript) :tsdk)
+                         "/my/typescript/lib"))
+          (should (eq (plist-get (plist-get opts :vue) :hybridMode)
+                      :json-false)))))))
+
+(ert-deftest ts-preset--vue-init-options-without-tsdk ()
+  "Vue init options omit tsdk when not available."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let ((eglot-typescript-preset-tsdk nil))
+        (cl-letf (((symbol-function 'executable-find)
+                   (lambda (_name) nil)))
+          (let ((opts (eglot-typescript-preset--vue-init-options)))
+            (should-not (plist-get opts :typescript))
+            (should (eq (plist-get (plist-get opts :vue) :hybridMode)
+                        :json-false))))))))
+
+
 ;;; --- Setup tests ---
 
 (ert-deftest ts-preset--setup-adds-server-programs ()
@@ -686,7 +810,7 @@
       (let ((eglot-server-programs nil)
             (project-find-functions nil))
         (eglot-typescript-preset-setup)
-        (should (>= (length eglot-server-programs) 2))
+        (should (>= (length eglot-server-programs) 3))
         (should (member #'eglot-typescript-preset--project-find
                         project-find-functions))))))
 
@@ -698,7 +822,17 @@
             (project-find-functions nil)
             (eglot-typescript-preset-astro-lsp-server nil))
         (eglot-typescript-preset-setup)
-        (should (= (length eglot-server-programs) 1))))))
+        (should (= (length eglot-server-programs) 2))))))
+
+(ert-deftest ts-preset--setup-skips-vue-when-disabled ()
+  "Setup skips Vue when vue-lsp-server is nil."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let ((eglot-server-programs nil)
+            (project-find-functions nil)
+            (eglot-typescript-preset-vue-lsp-server nil))
+        (eglot-typescript-preset-setup)
+        (should (= (length eglot-server-programs) 2))))))
 
 
 ;;; --- Widget type validation ---
@@ -752,6 +886,7 @@
 (ert-deftest ts-preset--lsp-server-safe-local-variable ()
   (should (eglot-typescript-preset--lsp-server-safe-p
            'typescript-language-server))
+  (should (eglot-typescript-preset--lsp-server-safe-p 'deno))
   (should (eglot-typescript-preset--lsp-server-safe-p 'rass))
   (should-not (eglot-typescript-preset--lsp-server-safe-p 'unknown))
   (should-not (eglot-typescript-preset--lsp-server-safe-p "rass"))
@@ -764,6 +899,14 @@
   (should-not (eglot-typescript-preset--astro-lsp-server-safe-p 'unknown))
   (should-not (eglot-typescript-preset--astro-lsp-server-safe-p "astro-ls")))
 
+(ert-deftest ts-preset--vue-lsp-server-safe-local-variable ()
+  (should (eglot-typescript-preset--vue-lsp-server-safe-p 'vue-language-server))
+  (should (eglot-typescript-preset--vue-lsp-server-safe-p 'rass))
+  (should (eglot-typescript-preset--vue-lsp-server-safe-p nil))
+  (should-not (eglot-typescript-preset--vue-lsp-server-safe-p 'unknown))
+  (should-not (eglot-typescript-preset--vue-lsp-server-safe-p
+               "vue-language-server")))
+
 (ert-deftest ts-preset--rass-tools-safe-local-variable ()
   (should (eglot-typescript-preset--rass-tools-safe-p
            '(typescript-language-server eslint)))
@@ -771,6 +914,8 @@
            '(typescript-language-server biome oxlint oxfmt)))
   (should (eglot-typescript-preset--rass-tools-safe-p
            '(astro-ls eslint)))
+  (should (eglot-typescript-preset--rass-tools-safe-p
+           '(vue-language-server tailwindcss-language-server)))
   (should (eglot-typescript-preset--rass-tools-safe-p '()))
   (should-not (eglot-typescript-preset--rass-tools-safe-p
                '(typescript-language-server ["biome" "lsp-proxy"])))

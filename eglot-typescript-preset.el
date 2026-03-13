@@ -28,13 +28,14 @@
 ;;; Commentary:
 
 ;; This package provides a preset for Eglot to work with TypeScript,
-;; JavaScript, and Astro files.  It configures LSP servers and
+;; JavaScript, Astro, and Vue files.  It configures LSP servers and
 ;; optional linter/formatter integration via rassumfrassum (rass).
 
 ;; Prerequisites:
 ;;
-;; - Install typescript-language-server (for TS/JS files)
+;; - Install typescript-language-server or deno (for TS/JS files)
 ;; - Install @astrojs/language-server (for Astro files, optional)
+;; - Install @vue/language-server (for Vue files, optional)
 ;; - Optionally install eslint-language-server, biome, oxlint, or oxfmt
 ;; - Download this file and add it to the load path
 
@@ -43,8 +44,8 @@
 ;;   (require 'eglot-typescript-preset)
 ;;   (eglot-typescript-preset-setup)
 ;;
-;; After that, opening TypeScript, JavaScript, or Astro files will
-;; automatically start the LSP server using Eglot.
+;; After that, opening TypeScript, JavaScript, Astro, or Vue files
+;; will automatically start the LSP server using Eglot.
 
 ;;; Code:
 
@@ -68,6 +69,7 @@
 (defcustom eglot-typescript-preset-lsp-server 'typescript-language-server
   "LSP server to use for TypeScript and JavaScript files."
   :type '(choice (const :tag "typescript-language-server" typescript-language-server)
+                 (const :tag "deno" deno)
                  (const :tag "rass" rass))
   :group 'eglot-typescript-preset)
 
@@ -113,6 +115,27 @@ When non-nil, this command is used verbatim and no generated preset is written."
            :match-alternatives (eglot-typescript-preset--rass-command-vector-p)))
   :group 'eglot-typescript-preset)
 
+;;;###autoload
+(defcustom eglot-typescript-preset-vue-lsp-server 'vue-language-server
+  "LSP server to use for Vue files."
+  :type '(choice (const :tag "vue-language-server" vue-language-server)
+                 (const :tag "rass" rass)
+                 (const :tag "Disabled" nil))
+  :group 'eglot-typescript-preset)
+
+;;;###autoload
+(defcustom eglot-typescript-preset-vue-rass-command nil
+  "Exact command vector to run for Vue when using `rass'.
+
+When non-nil, this command is used verbatim and no generated preset is written."
+  :type '(choice
+          (const :tag "Use generated preset" nil)
+          (restricted-sexp
+           :tag "Exact command vector"
+           :value ["rass" "vuetail"]
+           :match-alternatives (eglot-typescript-preset--rass-command-vector-p)))
+  :group 'eglot-typescript-preset)
+
 (defcustom eglot-typescript-preset-rass-max-contextual-presets 50
   "Maximum number of contextual generated `rass` presets to keep.
 
@@ -129,6 +152,24 @@ older ones are deleted.  Shared presets are not affected."
        (seq-every-p #'stringp value)))
 
 ;;;###autoload
+(defvar eglot-typescript-preset--rass-tools-type
+  '(repeat
+    (choice
+     (const :tag "astro-ls" astro-ls)
+     (const :tag "biome" biome)
+     (const :tag "eslint" eslint)
+     (const :tag "oxfmt" oxfmt)
+     (const :tag "oxlint" oxlint)
+     (const :tag "tailwindcss-language-server" tailwindcss-language-server)
+     (const :tag "typescript-language-server" typescript-language-server)
+     (const :tag "vue-language-server" vue-language-server)
+     (restricted-sexp
+      :tag "Command vector"
+      :value ["command"]
+      :match-alternatives (eglot-typescript-preset--rass-command-vector-p))))
+  "Shared customize type for rass-tools variables.")
+
+;;;###autoload
 (defcustom eglot-typescript-preset-rass-tools
   '(typescript-language-server eslint)
   "Tools included in the generated `rass` preset for TS/JS files.
@@ -136,18 +177,7 @@ older ones are deleted.  Shared presets are not affected."
 Each entry may be a supported symbol like `typescript-language-server',
 `eslint', `biome', `oxlint', or `oxfmt', or a literal command vector
 of strings."
-  :type '(repeat
-          (choice
-           (const :tag "astro-ls" astro-ls)
-           (const :tag "biome" biome)
-           (const :tag "eslint" eslint)
-           (const :tag "oxfmt" oxfmt)
-           (const :tag "oxlint" oxlint)
-           (const :tag "typescript-language-server" typescript-language-server)
-           (restricted-sexp
-            :tag "Command vector"
-            :value ["command"]
-            :match-alternatives (eglot-typescript-preset--rass-command-vector-p))))
+  :type eglot-typescript-preset--rass-tools-type
   :group 'eglot-typescript-preset)
 
 ;;;###autoload
@@ -156,25 +186,23 @@ of strings."
   "Tools included in the generated `rass` preset for Astro files.
 
 Same format as `eglot-typescript-preset-rass-tools'."
-  :type '(repeat
-          (choice
-           (const :tag "astro-ls" astro-ls)
-           (const :tag "biome" biome)
-           (const :tag "eslint" eslint)
-           (const :tag "oxfmt" oxfmt)
-           (const :tag "oxlint" oxlint)
-           (const :tag "typescript-language-server" typescript-language-server)
-           (restricted-sexp
-            :tag "Command vector"
-            :value ["command"]
-            :match-alternatives (eglot-typescript-preset--rass-command-vector-p))))
+  :type eglot-typescript-preset--rass-tools-type
+  :group 'eglot-typescript-preset)
+
+;;;###autoload
+(defcustom eglot-typescript-preset-vue-rass-tools
+  '(vue-language-server tailwindcss-language-server)
+  "Tools included in the generated `rass` preset for Vue files.
+
+Same format as `eglot-typescript-preset-rass-tools'."
+  :type eglot-typescript-preset--rass-tools-type
   :group 'eglot-typescript-preset)
 
 ;;;###autoload
 (defcustom eglot-typescript-preset-tsdk nil
   "Path to the TypeScript SDK `lib' directory.
 
-When non-nil, this is used for the Astro language server's
+When non-nil, this is used for the Astro and Vue language servers'
 `typescript.tsdk' initialization option.  When nil, the package
 attempts to find it automatically via `npm root -g'."
   :type '(choice (const :tag "Auto-detect" nil)
@@ -202,9 +230,15 @@ attempts to find it automatically via `npm root -g'."
   :type '(repeat symbol)
   :group 'eglot-typescript-preset)
 
+;;;###autoload
+(defcustom eglot-typescript-preset-vue-modes '(vue-mode vue-ts-mode)
+  "Major modes for Vue files."
+  :type '(repeat symbol)
+  :group 'eglot-typescript-preset)
+
 (defun eglot-typescript-preset--lsp-server-safe-p (value)
   "Return non-nil if VALUE is a safe `eglot-typescript-preset-lsp-server' value."
-  (memq value '(typescript-language-server rass)))
+  (memq value '(typescript-language-server deno rass)))
 
 (put 'eglot-typescript-preset-lsp-server 'safe-local-variable
      #'eglot-typescript-preset--lsp-server-safe-p)
@@ -216,6 +250,13 @@ attempts to find it automatically via `npm root -g'."
 (put 'eglot-typescript-preset-astro-lsp-server 'safe-local-variable
      #'eglot-typescript-preset--astro-lsp-server-safe-p)
 
+(defun eglot-typescript-preset--vue-lsp-server-safe-p (value)
+  "Return non-nil if VALUE is safe for `eglot-typescript-preset-vue-lsp-server'."
+  (memq value '(vue-language-server rass nil)))
+
+(put 'eglot-typescript-preset-vue-lsp-server 'safe-local-variable
+     #'eglot-typescript-preset--vue-lsp-server-safe-p)
+
 (defun eglot-typescript-preset--rass-tools-safe-p (value)
   "Return non-nil if VALUE is a safe `eglot-typescript-preset-rass-tools' value.
 Only lists of known symbols are considered safe.  Literal command vectors
@@ -223,13 +264,18 @@ are excluded because they could execute arbitrary programs."
   (and (listp value)
        (seq-every-p (lambda (item)
                       (memq item '(astro-ls biome eslint oxfmt oxlint
-                                   typescript-language-server)))
+                                   tailwindcss-language-server
+                                   typescript-language-server
+                                   vue-language-server)))
                     value)))
 
 (put 'eglot-typescript-preset-rass-tools 'safe-local-variable
      #'eglot-typescript-preset--rass-tools-safe-p)
 
 (put 'eglot-typescript-preset-astro-rass-tools 'safe-local-variable
+     #'eglot-typescript-preset--rass-tools-safe-p)
+
+(put 'eglot-typescript-preset-vue-rass-tools 'safe-local-variable
      #'eglot-typescript-preset--rass-tools-safe-p)
 
 (defun eglot-typescript-preset--project-markers-safe-p (value)
@@ -278,13 +324,16 @@ Otherwise, try to find it via `npm root -g'."
       (cond
        ((string= base "astro-ls") 'astro-ls)
        ((string= base "biome") 'biome)
+       ((string= base "deno") 'deno)
        ((member base '("eslint" "eslint-language-server"
                         "vscode-eslint-language-server"))
         'eslint)
        ((string= base "oxfmt") 'oxfmt)
        ((string= base "oxlint") 'oxlint)
+       ((string= base "tailwindcss-language-server") 'tailwindcss-language-server)
        ((member base '("typescript-language-server" "tsserver"))
-        'typescript-language-server)))))
+        'typescript-language-server)
+       ((string= base "vue-language-server") 'vue-language-server)))))
 
 (defun eglot-typescript-preset--rass-tool-command (tool)
   "Return the server command for `rass` TOOL."
@@ -305,9 +354,17 @@ Otherwise, try to find it via `npm root -g'."
    ((eq tool 'oxlint)
     (list (eglot-typescript-preset--resolve-executable "oxlint")
           "--lsp"))
+   ((eq tool 'tailwindcss-language-server)
+    (list (eglot-typescript-preset--resolve-executable
+           "tailwindcss-language-server")
+          "--stdio"))
    ((eq tool 'typescript-language-server)
     (list (eglot-typescript-preset--resolve-executable
            "typescript-language-server")
+          "--stdio"))
+   ((eq tool 'vue-language-server)
+    (list (eglot-typescript-preset--resolve-executable
+           "vue-language-server")
           "--stdio"))
    ((vectorp tool)
     (let* ((command (append tool nil))
@@ -324,8 +381,10 @@ Otherwise, try to find it via `npm root -g'."
   (eglot-typescript-preset--tool-kind-from-name (car command)))
 
 (defun eglot-typescript-preset--rass-json-string (object)
-  "Serialize OBJECT to JSON."
-  (decode-coding-string (json-serialize object) 'utf-8))
+  "Serialize OBJECT to JSON.
+Handles `:json-false' by serializing nil as false."
+  (decode-coding-string
+   (json-serialize object :false-object :json-false) 'utf-8))
 
 (defun eglot-typescript-preset--rass-python-literal (object)
   "Serialize OBJECT to a Python-compatible literal string.
@@ -497,13 +556,20 @@ REPLACEMENTS is an alist mapping literal placeholder strings to values."
         `(:contentIntellisense t :typescript (:tsdk ,tsdk))
       '(:contentIntellisense t))))
 
+(defun eglot-typescript-preset--vue-init-options ()
+  "Return initializationOptions for the Vue language server."
+  (let ((tsdk (eglot-typescript-preset--find-tsdk)))
+    (if tsdk
+        `(:typescript (:tsdk ,tsdk) :vue (:hybridMode :json-false))
+      '(:vue (:hybridMode :json-false)))))
+
 (defun eglot-typescript-preset--write-rass-preset (path commands
-                                                        astro-init-options
+                                                        init-options
                                                         eslint-logic-p)
   "Write a generated `rass` preset to PATH.
 
 COMMANDS is the list of server commands.
-ASTRO-INIT-OPTIONS, when non-nil, is a plist to inject into `initialize'.
+INIT-OPTIONS, when non-nil, is a plist to inject into `initialize'.
 ESLINT-LOGIC-P, when non-nil, enables ESLint workspace/configuration logic."
   (eglot-typescript-preset--write-file-if-changed
    path
@@ -512,9 +578,9 @@ ESLINT-LOGIC-P, when non-nil, enables ESLint workspace/configuration logic."
     `(("__SERVERS__"
        . ,(eglot-typescript-preset--rass-json-string
            (vconcat (mapcar #'vconcat commands))))
-      ("__ASTRO_INIT_OPTIONS__"
-       . ,(if astro-init-options
-              (eglot-typescript-preset--rass-python-literal astro-init-options)
+      ("__INIT_OPTIONS__"
+       . ,(if init-options
+              (eglot-typescript-preset--rass-python-literal init-options)
             "None"))
       ("__ESLINT_LOGIC__"
        . ,(if eslint-logic-p "True" "False"))))))
@@ -527,25 +593,34 @@ Returns the preset path, or nil when RASS-COMMAND is set."
   (unless rass-command
     (eglot-typescript-preset--rass-preset-path-1 tools)))
 
+(defun eglot-typescript-preset--rass-init-options-for-tools (commands)
+  "Return merged initializationOptions for COMMANDS, or nil."
+  (let ((has-astro (seq-some (lambda (cmd)
+                               (eq (eglot-typescript-preset--rass-tool-kind cmd)
+                                   'astro-ls))
+                             commands))
+        (has-vue (seq-some (lambda (cmd)
+                             (eq (eglot-typescript-preset--rass-tool-kind cmd)
+                                 'vue-language-server))
+                           commands)))
+    (cond
+     (has-astro (eglot-typescript-preset--astro-init-options))
+     (has-vue (eglot-typescript-preset--vue-init-options)))))
+
 (defun eglot-typescript-preset--rass-preset-path-1 (tools)
   "Generate and return the `rass` preset path for TOOLS."
   (let* ((tool-specs (mapcar #'eglot-typescript-preset--rass-tool-spec tools))
          (commands (mapcar (lambda (tool-spec)
                              (plist-get tool-spec :command))
                            tool-specs))
-         (has-astro (seq-some (lambda (command)
-                                (eq (eglot-typescript-preset--rass-tool-kind
-                                     command)
-                                    'astro-ls))
-                              commands))
-         (astro-init-options (when has-astro
-                               (eglot-typescript-preset--astro-init-options)))
+         (init-options
+          (eglot-typescript-preset--rass-init-options-for-tools commands))
          (has-eslint (seq-some (lambda (command)
                                  (eq (eglot-typescript-preset--rass-tool-kind
                                       command)
                                      'eslint))
                                commands))
-         (contextual-p (or astro-init-options
+         (contextual-p (or init-options
                            (seq-some
                             (lambda (tool-spec)
                               (plist-get
@@ -558,13 +633,13 @@ Returns the preset path, or nil when RASS-COMMAND is set."
                                      (list
                                       (eglot-typescript-preset--rass-json-string
                                        (vconcat (mapcar #'vconcat commands)))
-                                      (when astro-init-options
+                                      (when init-options
                                         (eglot-typescript-preset--rass-json-string
-                                         astro-init-options))))
+                                         init-options))))
                                "\0"))
                  (eglot-typescript-preset--rass-shared-preset-path tools))))
     (eglot-typescript-preset--write-rass-preset
-     path commands astro-init-options has-eslint)
+     path commands init-options has-eslint)
     (when contextual-p
       (eglot-typescript-preset--cleanup-rass-contextual-presets path))
     path))
@@ -614,6 +689,9 @@ Returns (js-project . ROOT) if DIR is inside a JS/TS project."
              (eglot-typescript-preset--rass-preset-path
               eglot-typescript-preset-rass-tools
               eglot-typescript-preset-rass-command))))
+    ('deno
+     `(,(eglot-typescript-preset--resolve-executable "deno") "lsp"
+       :initializationOptions (:enable t :lint t)))
     ('typescript-language-server
      (list (eglot-typescript-preset--resolve-executable
             "typescript-language-server")
@@ -639,6 +717,26 @@ Returns (js-project . ROOT) if DIR is inside a JS/TS project."
            `(,@command :initializationOptions ,init-options)
          command)))))
 
+(defun eglot-typescript-preset--vue-server-contact (_interactive)
+  "Return the server contact spec for Vue LSP."
+  (pcase eglot-typescript-preset-vue-lsp-server
+    ('rass
+     (if eglot-typescript-preset-vue-rass-command
+         (append eglot-typescript-preset-vue-rass-command nil)
+       (list (eglot-typescript-preset--resolve-executable
+              eglot-typescript-preset-rass-program)
+             (eglot-typescript-preset--rass-preset-path
+              eglot-typescript-preset-vue-rass-tools
+              eglot-typescript-preset-vue-rass-command))))
+    ('vue-language-server
+     (let* ((init-options (eglot-typescript-preset--vue-init-options))
+            (command (list (eglot-typescript-preset--resolve-executable
+                           "vue-language-server")
+                          "--stdio")))
+       (if init-options
+           `(,@command :initializationOptions ,init-options)
+         command)))))
+
 (defun eglot-typescript-preset--workspace-configuration-plist-a
     (orig-fn server &optional path)
   "Advice to merge ESLint configuration into workspace configuration.
@@ -657,7 +755,7 @@ configuration when the server is an ESLint language server."
 
 ;;;###autoload
 (defun eglot-typescript-preset-setup ()
-  "Set up Eglot to support TypeScript, JavaScript, and Astro modes.
+  "Set up Eglot to support TypeScript, JavaScript, Astro, and Vue modes.
 
 Adds hooks for project detection and Eglot configuration.
 Configures `eglot-server-programs' based on the preset settings.
@@ -670,6 +768,10 @@ Call this after loading Eglot."
     (add-to-list 'eglot-server-programs
                  `(,eglot-typescript-preset-astro-modes .
                    eglot-typescript-preset--astro-server-contact)))
+  (when eglot-typescript-preset-vue-lsp-server
+    (add-to-list 'eglot-server-programs
+                 `(,eglot-typescript-preset-vue-modes .
+                   eglot-typescript-preset--vue-server-contact)))
   (add-hook 'project-find-functions
             #'eglot-typescript-preset--project-find))
 

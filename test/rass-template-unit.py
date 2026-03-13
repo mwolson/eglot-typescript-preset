@@ -55,6 +55,7 @@ def main():
     server_kind = {
         "astro-ls": module._server_kind("astro-ls"),
         "biome": module._server_kind("biome"),
+        "deno": module._server_kind("deno"),
         "eslint": module._server_kind("eslint"),
         "eslint-language-server": module._server_kind("eslint-language-server"),
         "vscode-eslint-language-server": module._server_kind(
@@ -62,9 +63,13 @@ def main():
         ),
         "oxfmt": module._server_kind("oxfmt"),
         "oxlint": module._server_kind("oxlint"),
+        "tailwindcss-language-server": module._server_kind(
+            "tailwindcss-language-server"
+        ),
         "typescript-language-server": module._server_kind(
             "typescript-language-server"
         ),
+        "vue-language-server": module._server_kind("vue-language-server"),
         "unknown": module._server_kind("custom-lsp"),
     }
 
@@ -75,7 +80,7 @@ def main():
                 "servers": module.servers(),
                 "hasLogicClass": hasattr(module, "logic_class"),
                 "eslintLogic": module.ESLINT_LOGIC,
-                "astroInitOptions": module.ASTRO_INIT_OPTIONS,
+                "initOptions": module.INIT_OPTIONS,
             }
         )
     )

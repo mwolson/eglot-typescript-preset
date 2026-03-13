@@ -8,7 +8,7 @@ from rassumfrassum.json import JSON
 from rassumfrassum.util import dmerge
 
 SERVERS = __SERVERS__
-ASTRO_INIT_OPTIONS = __ASTRO_INIT_OPTIONS__
+INIT_OPTIONS = __INIT_OPTIONS__
 ESLINT_LOGIC = __ESLINT_LOGIC__
 
 
@@ -20,6 +20,8 @@ def _server_kind(name: str) -> str | None:
         return "astro-ls"
     if base == "biome":
         return "biome"
+    if base == "deno":
+        return "deno"
     if base in ("eslint", "eslint-language-server",
                 "vscode-eslint-language-server"):
         return "eslint"
@@ -27,8 +29,12 @@ def _server_kind(name: str) -> str | None:
         return "oxfmt"
     if base == "oxlint":
         return "oxlint"
+    if base == "tailwindcss-language-server":
+        return "tailwindcss-language-server"
     if base in ("typescript-language-server", "tsserver"):
         return "typescript-language-server"
+    if base == "vue-language-server":
+        return "vue-language-server"
     return None
 
 
@@ -71,10 +77,10 @@ class GeneratedTypeScriptLogic(LspLogic):
     async def on_client_request(
         self, method: str, params: JSON, servers: list[Server]
     ):
-        if method == "initialize" and ASTRO_INIT_OPTIONS:
+        if method == "initialize" and INIT_OPTIONS:
             params["initializationOptions"] = dmerge(
                 params.get("initializationOptions") or {},
-                ASTRO_INIT_OPTIONS,
+                INIT_OPTIONS,
             )
         return await super().on_client_request(method, params, servers)
 
