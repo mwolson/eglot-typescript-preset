@@ -14,7 +14,10 @@ def ensure_rassumfrassum_stubs():
     util = types.ModuleType("rassumfrassum.util")
 
     class LspLogic:
-        pass
+        primary = None
+
+        def process_request(self, method, params, server):
+            pass
 
     class Server:
         pass
@@ -73,6 +76,29 @@ def main():
         "unknown": module._server_kind("custom-lsp"),
     }
 
+    init_options_scoping = None
+    if module.INIT_OPTIONS and hasattr(module, "logic_class"):
+        logic_cls = module.logic_class()
+        primary = sys.modules["rassumfrassum.frassum"].Server()
+        primary.name = "primary"
+        secondary = sys.modules["rassumfrassum.frassum"].Server()
+        secondary.name = "secondary"
+        logic = logic_cls.__new__(logic_cls)
+        logic.primary = primary
+
+        primary_params = {"initializationOptions": {}}
+        logic.process_request("initialize", primary_params, primary)
+        primary_got = primary_params.get("initializationOptions", {})
+
+        secondary_params = {"initializationOptions": {}}
+        logic.process_request("initialize", secondary_params, secondary)
+        secondary_got = secondary_params.get("initializationOptions", {})
+
+        init_options_scoping = {
+            "primaryGotOptions": bool(primary_got),
+            "secondaryGotOptions": bool(secondary_got),
+        }
+
     print(
         json.dumps(
             {
@@ -81,6 +107,7 @@ def main():
                 "hasLogicClass": hasattr(module, "logic_class"),
                 "eslintLogic": module.ESLINT_LOGIC,
                 "initOptions": module.INIT_OPTIONS,
+                "initOptionsScoping": init_options_scoping,
             }
         )
     )

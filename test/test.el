@@ -621,6 +621,7 @@ If TARGET-NAME is non-nil, rename the file."
           (let-alist result
             (should (equal .eslintLogic :false))
             (should (equal .initOptions :null))
+            (should (equal .initOptionsScoping :null))
             (should .hasLogicClass)
             (let-alist .serverKind
               (should (equal .typescript-language-server
@@ -670,7 +671,10 @@ If TARGET-NAME is non-nil, rename the file."
                (result (json-parse-string output :object-type 'alist)))
           (let-alist result
             (should (not (equal .initOptions :null)))
-            (should (not (equal .eslintLogic :false)))))))))
+            (should (not (equal .eslintLogic :false)))
+            (let-alist .initOptionsScoping
+              (should (not (equal .primaryGotOptions :false)))
+              (should (equal .secondaryGotOptions :false)))))))))
 
 (ert-deftest ts-preset--template-unit-vue ()
   "Validate template with Vue init options."
@@ -688,7 +692,10 @@ If TARGET-NAME is non-nil, rename the file."
                (result (json-parse-string output :object-type 'alist)))
           (let-alist result
             (should (not (equal .initOptions :null)))
-            (should (equal .eslintLogic :false))))))))
+            (should (equal .eslintLogic :false))
+            (let-alist .initOptionsScoping
+              (should (not (equal .primaryGotOptions :false)))
+              (should (equal .secondaryGotOptions :false)))))))))
 
 (ert-deftest ts-preset--template-unit-ts-eslint-oxlint ()
   "Validate template with typescript-language-server + eslint + oxlint."

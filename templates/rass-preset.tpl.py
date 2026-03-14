@@ -74,15 +74,15 @@ def _eslint_config(workspace_folder: dict | None = None) -> dict:
 
 
 class GeneratedTypeScriptLogic(LspLogic):
-    async def on_client_request(
-        self, method: str, params: JSON, servers: list[Server]
-    ):
-        if method == "initialize" and INIT_OPTIONS:
+    def process_request(
+        self, method: str, params: JSON, server: Server
+    ) -> None:
+        if method == "initialize" and INIT_OPTIONS and server == self.primary:
             params["initializationOptions"] = dmerge(
                 params.get("initializationOptions") or {},
                 INIT_OPTIONS,
             )
-        return await super().on_client_request(method, params, servers)
+        super().process_request(method, params, server)
 
     async def on_client_response(
         self,
