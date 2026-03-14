@@ -2,6 +2,7 @@
 node_modules
 
 # Compiled
+__pycache__
 *.elc
 
 # Packaging

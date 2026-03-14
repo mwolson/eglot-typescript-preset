@@ -3,7 +3,7 @@
 import os
 from typing import Any, cast
 
-from rassumfrassum.frassum import LspLogic, Server
+from rassumfrassum.frassum import DirectResponse, LspLogic, Server
 from rassumfrassum.json import JSON
 from rassumfrassum.util import dmerge
 
@@ -87,6 +87,24 @@ class GeneratedTypeScriptLogic(LspLogic):
             )
         super().process_request(method, params, server)
 
+    async def on_server_request(
+        self, method: str, params: JSON, source: Server
+    ) -> DirectResponse | None:
+        result = await super().on_server_request(method, params, source)
+        if result is not None:
+            return result
+        if method == "client/registerCapability":
+            unsupported = {
+                "workspace/didChangeWatchedFiles",
+                "workspace/didChangeWorkspaceFolders",
+            }
+            regs = params.get("registrations", [])
+            if regs and all(
+                reg.get("method") in unsupported for reg in regs
+            ):
+                return DirectResponse(payload={})
+        return None
+
     async def on_client_response(
         self,
         method: str,
@@ -95,12 +113,7 @@ class GeneratedTypeScriptLogic(LspLogic):
         is_error: bool,
         server: Server,
     ) -> None:
-        if (
-            ESLINT_LOGIC
-            and method == "workspace/configuration"
-            and not is_error
-            and "eslint" in server.name.lower()
-        ):
+        if method == "workspace/configuration" and not is_error:
             req_items = request_params.get("items", [])
             res_items = cast(list[Any], response_payload)
             if len(res_items) < len(req_items):
@@ -108,7 +121,18 @@ class GeneratedTypeScriptLogic(LspLogic):
 
             for i, item in enumerate(req_items):
                 section = item.get("section", "")
-                if section == "":
+                if res_items[i] is None and section:
+                    if section in ("css", "less", "scss"):
+                        res_items[i] = {
+                            "lint": {"unknownAtRules": "ignore"},
+                        }
+                    else:
+                        res_items[i] = {}
+                if (
+                    ESLINT_LOGIC
+                    and section == ""
+                    and "eslint" in server.name.lower()
+                ):
                     wfolder = _find_workspace_folder(
                         item.get("scopeUri", "")
                     )

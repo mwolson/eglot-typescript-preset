@@ -1226,6 +1226,32 @@ workspace root.  TIMEOUT defaults to 20 seconds."
               (let-alist result
                 (should .initialized))))))))
 
+  (ert-deftest ts-preset--live-diag-ts-biome-debugger ()
+    "Live diagnostic: biome flags debugger statement in TS file."
+    (skip-unless (my-test--live-local-bins-available-p))
+    (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+      (skip-unless (executable-find "rass"))
+      (skip-unless (executable-find "typescript-language-server"))
+      (skip-unless (executable-find "biome"))
+      (my-test-with-tmp-dir tmp-dir
+        (my-test-with-project-env tmp-dir
+          (let* ((eglot-typescript-preset-rass-tools
+                  '(typescript-language-server biome))
+                 (path (eglot-typescript-preset--rass-preset-path
+                        eglot-typescript-preset-rass-tools nil))
+                 (test-file (my-test-copy-fixture
+                             "debugger.ts" tmp-dir)))
+            (my-test-copy-fixture "package.json" tmp-dir)
+            (let-alist (my-test--run-rass-with-diagnostics
+                        path test-file "typescript" tmp-dir)
+              (should .initialized)
+              (should (cl-some (lambda (src)
+                                 (string-match-p "Biome\\|biome" src))
+                               (append .diagnosticSources nil)))
+              (should (cl-some (lambda (code)
+                                 (string-match-p "noDebugger" code))
+                               (append .diagnosticCodes nil)))))))))
+
   (ert-deftest ts-preset--live-rass-ts-eslint-oxlint ()
     "Live: rass with typescript-language-server + eslint + oxlint."
     (skip-unless (my-test--live-local-bins-available-p))
@@ -1468,6 +1494,30 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                                  (string-match-p "tailwindcss" src))
                                (append .diagnosticSources nil)))
               (should (member "invalidTailwindDirective"
+                              (append .diagnosticCodes nil)))))))))
+
+  (ert-deftest ts-preset--live-diag-css-rass-unknown-property ()
+    "Live diagnostic: vscode-css via rass flags unknown CSS property."
+    (skip-unless (my-test--live-local-bins-available-p))
+    (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+      (skip-unless (executable-find "rass"))
+      (skip-unless (executable-find "vscode-css-language-server"))
+      (my-test-with-tmp-dir tmp-dir
+        (my-test-with-project-env tmp-dir
+          (let* ((eglot-typescript-preset-css-rass-tools
+                  '(vscode-css-language-server))
+                 (path (eglot-typescript-preset--rass-preset-path
+                        eglot-typescript-preset-css-rass-tools nil))
+                 (test-file (my-test-copy-fixture
+                             "css-unknown-property.css" tmp-dir)))
+            (my-test-copy-fixture "package.json" tmp-dir)
+            (let-alist (my-test--run-rass-with-diagnostics
+                        path test-file "css" tmp-dir)
+              (should .initialized)
+              (should (cl-some (lambda (src)
+                                 (string-match-p "css" src))
+                               (append .diagnosticSources nil)))
+              (should (member "unknownProperties"
                               (append .diagnosticCodes nil)))))))))
 
   ) ;; end of (when ... live tests)

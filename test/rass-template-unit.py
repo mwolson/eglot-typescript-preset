@@ -19,6 +19,11 @@ def ensure_rassumfrassum_stubs():
         def process_request(self, method, params, server):
             pass
 
+    class DirectResponse:
+        def __init__(self, payload=None, is_error=False):
+            self.payload = payload
+            self.is_error = is_error
+
     class Server:
         pass
 
@@ -31,6 +36,7 @@ def ensure_rassumfrassum_stubs():
                 result[key] = value
         return result
 
+    frassum.DirectResponse = DirectResponse
     frassum.LspLogic = LspLogic
     frassum.Server = Server
     json_mod.JSON = dict
