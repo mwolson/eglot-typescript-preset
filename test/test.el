@@ -1569,6 +1569,79 @@ workspace root.  TIMEOUT defaults to 20 seconds."
               (should (member "unknownProperties"
                               (append .diagnosticCodes nil)))))))))
 
+  ;; --- Vue rass tests ---
+
+  (ert-deftest ts-preset--live-rass-vue-tailwind ()
+    "Live: rass with vue-language-server + tailwindcss."
+    (skip-unless (my-test--live-local-bins-available-p))
+    (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+      (skip-unless (executable-find "rass"))
+      (skip-unless (executable-find "vue-language-server"))
+      (skip-unless (executable-find "tailwindcss-language-server"))
+      (my-test-with-tmp-dir tmp-dir
+        (my-test-with-project-env tmp-dir
+          (let* ((eglot-typescript-preset-tsdk my-test-local-tsdk)
+                 (tools '(vue-language-server tailwindcss-language-server))
+                 (path (eglot-typescript-preset--rass-preset-path tools nil))
+                 (test-file (my-test-copy-fixture "valid.vue" tmp-dir)))
+            (my-test-copy-fixture "package.json" tmp-dir)
+            (let* ((output (shell-command-to-string
+                            (format "python3 %s %s %s --language-id vue"
+                                    (shell-quote-argument
+                                     my-test-live-rass-client)
+                                    (shell-quote-argument path)
+                                    (shell-quote-argument test-file))))
+                   (result (json-parse-string output :object-type 'alist)))
+              (let-alist result
+                (should .initialized))))))))
+
+  (ert-deftest ts-preset--live-diag-vue-template-error ()
+    "Live diagnostic: vue-language-server flags template compilation error."
+    (skip-unless (my-test--live-local-bins-available-p))
+    (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+      (skip-unless (executable-find "rass"))
+      (skip-unless (executable-find "vue-language-server"))
+      (my-test-with-tmp-dir tmp-dir
+        (my-test-with-project-env tmp-dir
+          (let* ((eglot-typescript-preset-tsdk my-test-local-tsdk)
+                 (tools '(vue-language-server))
+                 (path (eglot-typescript-preset--rass-preset-path tools nil))
+                 (test-file (my-test-copy-fixture
+                             "template-error.vue" tmp-dir)))
+            (my-test-copy-fixture "package.json" tmp-dir)
+            (let-alist (my-test--run-rass-with-diagnostics
+                        path test-file "vue" tmp-dir 30)
+              (should .initialized)
+              (should (cl-some (lambda (src)
+                                 (string-match-p "vue" src))
+                               (append .diagnosticSources nil)))
+              (should (member "28"
+                              (append .diagnosticCodes nil)))))))))
+
+  (ert-deftest ts-preset--live-diag-vue-tw-css-conflict ()
+    "Live diagnostic: tailwindcss flags conflicting classes in Vue file."
+    (skip-unless (my-test--live-local-bins-available-p))
+    (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+      (skip-unless (executable-find "rass"))
+      (skip-unless (executable-find "vue-language-server"))
+      (skip-unless (executable-find "tailwindcss-language-server"))
+      (my-test-with-tmp-dir tmp-dir
+        (my-test-with-project-env tmp-dir
+          (let* ((eglot-typescript-preset-tsdk my-test-local-tsdk)
+                 (tools '(vue-language-server tailwindcss-language-server))
+                 (path (eglot-typescript-preset--rass-preset-path tools nil))
+                 (tw-dir (my-test-copy-fixture-dir "tw-project" tmp-dir))
+                 (test-file (expand-file-name "css-conflict.vue" tw-dir)))
+            (my-test-copy-fixture "package.json" tmp-dir)
+            (let-alist (my-test--run-rass-with-diagnostics
+                        path test-file "vue" tw-dir 30)
+              (should .initialized)
+              (should (cl-some (lambda (src)
+                                 (string-match-p "tailwindcss" src))
+                               (append .diagnosticSources nil)))
+              (should (member "cssConflict"
+                              (append .diagnosticCodes nil)))))))))
+
   ) ;; end of (when ... live tests)
 
 (provide 'test)

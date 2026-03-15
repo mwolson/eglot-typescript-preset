@@ -36,7 +36,7 @@ def _server_kind(name: str) -> str | None:
     if base in ("vscode-css-language-server", "css-language-server",
                 "css-languageserver"):
         return "vscode-css-language-server"
-    if base == "vue-language-server":
+    if base in ("vue-language-server", "@vue/language-server"):
         return "vue-language-server"
     return None
 
@@ -86,6 +86,22 @@ class GeneratedTypeScriptLogic(LspLogic):
                 INIT_OPTIONS,
             )
         super().process_request(method, params, server)
+
+    async def on_server_notification(
+        self, method: str, params: JSON, source: Server
+    ) -> None:
+        if (
+            method == "tsserver/request"
+            and _server_kind(source.name) == "vue-language-server"
+        ):
+            req = params[0] if isinstance(params, list) else None
+            req_id = req[0] if isinstance(req, list) else None
+            if req_id is not None:
+                await self.notify_server(
+                    source, "tsserver/response", [[req_id, None]]
+                )
+            return
+        await super().on_server_notification(method, params, source)
 
     async def on_server_request(
         self, method: str, params: JSON, source: Server

@@ -1,0 +1,6 @@
+<script lang="ts">
+const x: number = 1;
+</script>
+<template>
+  <p>hello</p>
+</template>
