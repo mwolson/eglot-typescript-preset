@@ -107,7 +107,10 @@ def main():
                 "rootUri": root_path.as_uri(),
                 "capabilities": {
                     "workspace": {"configuration": True},
-                    "textDocument": {"publishDiagnostics": {}},
+                    "textDocument": {
+                        "publishDiagnostics": {},
+                        "$streamingDiagnostics": True,
+                    },
                 },
                 "workspaceFolders": [
                     {
@@ -179,7 +182,10 @@ def main():
                 )
                 continue
 
-            if method == "textDocument/publishDiagnostics":
+            if method in (
+                "textDocument/publishDiagnostics",
+                "$/streamDiagnostics",
+            ):
                 saw_diagnostics = True
                 for diagnostic in message.get("params", {}).get("diagnostics", []):
                     source = diagnostic.get("source")

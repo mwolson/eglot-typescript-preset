@@ -53,6 +53,7 @@
 (require 'json)
 
 (declare-function eglot--managed-buffers "eglot")
+(declare-function eglot--workspace-configuration-plist "eglot")
 (declare-function eglot-current-server "eglot")
 (declare-function eglot-ensure "eglot")
 (declare-function eglot-shutdown "eglot")
@@ -864,18 +865,19 @@ the VC backend, which respects .gitignore."
 
 (defun eglot-typescript-preset--workspace-configuration-plist-a
     (orig-fn server &optional path)
-  "Advice to merge ESLint configuration into workspace configuration.
+  "Advice to provide default workspace configuration.
 
-Calls ORIG-FN with SERVER and PATH arguments, then merges ESLint
-configuration when the server is an ESLint language server."
+Calls ORIG-FN with SERVER and PATH, then appends TypeScript
+validation defaults when the server manages Astro or Vue buffers.
+Existing user settings take precedence because `plist-get' returns
+the first match."
   (let ((base-config (funcall orig-fn server path)))
-    (if-let* (((eq eglot-typescript-preset-lsp-server
-                   'typescript-language-server))
-              (buf (car (eglot--managed-buffers server)))
+    (if-let* ((buf (car (eglot--managed-buffers server)))
               ((with-current-buffer buf
                  (apply #'derived-mode-p
-                        eglot-typescript-preset-js-modes))))
-        base-config
+                        (append eglot-typescript-preset-astro-modes
+                                eglot-typescript-preset-vue-modes)))))
+        (append base-config '(:typescript (:validate (:enable t))))
       base-config)))
 
 (defun eglot-typescript-preset--css-server-contact (_interactive)
@@ -917,6 +919,8 @@ Call this after loading Eglot."
     (add-to-list 'eglot-server-programs
                  `(,eglot-typescript-preset-vue-modes
                    . eglot-typescript-preset--vue-server-contact)))
+  (advice-add 'eglot--workspace-configuration-plist :around
+              #'eglot-typescript-preset--workspace-configuration-plist-a)
   (add-hook 'project-find-functions
             #'eglot-typescript-preset--project-find))
 

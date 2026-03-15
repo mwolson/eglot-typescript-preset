@@ -75,6 +75,12 @@ If TARGET-NAME is non-nil, rename the file."
     (copy-directory src dst nil t t)
     dst))
 
+(defun my-test-link-node-modules (target-dir)
+  "Symlink project `node_modules' into TARGET-DIR for ESLint resolution."
+  (let ((src (expand-file-name "node_modules" my-test-project-dir))
+        (dst (expand-file-name "node_modules" target-dir)))
+    (make-symbolic-link src dst t)))
+
 (defun my-test--with-tmp-dir (fn)
   "Call FN with a temporary directory, cleaned up afterward."
   (let ((tmp (make-temp-file "eglot-ts-test-" t)))
@@ -1095,6 +1101,69 @@ the JS project boundary."
         (should (= (length eglot-server-programs) 3))))))
 
 
+;;; --- Workspace configuration advice ---
+
+(ert-deftest ts-preset--workspace-config-astro-appends-typescript ()
+  "Workspace config advice appends TypeScript validation for Astro buffers."
+  (with-temp-buffer
+    (setq major-mode 'astro-ts-mode)
+    (let ((buf (current-buffer))
+          (server 'mock-server))
+      (cl-letf (((symbol-function 'eglot--managed-buffers)
+                 (lambda (_s) (list buf))))
+        (let ((result (eglot-typescript-preset--workspace-configuration-plist-a
+                       (lambda (_s &optional _p) nil)
+                       server)))
+          (should (plist-get result :typescript))
+          (should (eq (plist-get
+                       (plist-get
+                        (plist-get result :typescript) :validate)
+                       :enable)
+                      t)))))))
+
+(ert-deftest ts-preset--workspace-config-vue-appends-typescript ()
+  "Workspace config advice appends TypeScript validation for Vue buffers."
+  (with-temp-buffer
+    (setq major-mode 'vue-mode)
+    (let ((buf (current-buffer))
+          (server 'mock-server))
+      (cl-letf (((symbol-function 'eglot--managed-buffers)
+                 (lambda (_s) (list buf))))
+        (let ((result (eglot-typescript-preset--workspace-configuration-plist-a
+                       (lambda (_s &optional _p) nil)
+                       server)))
+          (should (plist-get result :typescript)))))))
+
+(ert-deftest ts-preset--workspace-config-js-unchanged ()
+  "Workspace config advice does not modify config for JS buffers."
+  (with-temp-buffer
+    (setq major-mode 'typescript-ts-mode)
+    (let ((buf (current-buffer))
+          (server 'mock-server))
+      (cl-letf (((symbol-function 'eglot--managed-buffers)
+                 (lambda (_s) (list buf))))
+        (let ((result (eglot-typescript-preset--workspace-configuration-plist-a
+                       (lambda (_s &optional _p) '(:foo 1))
+                       server)))
+          (should (eq (plist-get result :foo) 1))
+          (should-not (plist-get result :typescript)))))))
+
+(ert-deftest ts-preset--workspace-config-user-typescript-takes-precedence ()
+  "User-provided :typescript config takes precedence over defaults."
+  (with-temp-buffer
+    (setq major-mode 'astro-ts-mode)
+    (let ((buf (current-buffer))
+          (server 'mock-server)
+          (user-config '(:typescript (:tsdk "/custom/path"))))
+      (cl-letf (((symbol-function 'eglot--managed-buffers)
+                 (lambda (_s) (list buf))))
+        (let ((result (eglot-typescript-preset--workspace-configuration-plist-a
+                       (lambda (_s &optional _p) user-config)
+                       server)))
+          (should (equal (plist-get result :typescript)
+                         '(:tsdk "/custom/path"))))))))
+
+
 ;;; --- Widget type validation ---
 
 (ert-deftest ts-preset--rass-command-vector-p ()
@@ -1229,8 +1298,25 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                             timeout))))
       (json-parse-string output :object-type 'alist)))
 
+  (defun my-test--assert-diagnostics (result expected-codes
+                                             &optional expected-sources)
+    "Assert RESULT has exactly EXPECTED-CODES diagnostics.
+EXPECTED-CODES is compared as sorted deduplicated sets against the
+actual diagnostic codes.  Fails if there are unexpected or missing
+codes.  EXPECTED-SOURCES, when non-nil, lists source patterns that
+must each match at least one actual source."
+    (let-alist result
+      (should .initialized)
+      (let ((actual (sort (delete-dups (append .diagnosticCodes nil))
+                          #'string<))
+            (expected (sort (copy-sequence expected-codes) #'string<)))
+        (should (equal actual expected)))
+      (dolist (src-pat expected-sources)
+        (should (cl-some (lambda (s) (string-match-p src-pat s))
+                         (append .diagnosticSources nil))))))
+
   (ert-deftest ts-preset--live-rass-tslint ()
-    "Live: rass with tslint preset."
+    "Live: rass with tslint preset produces no diagnostics on valid file."
     (skip-unless (my-test--live-local-bins-available-p))
     (let ((exec-path (cons my-test-local-bin-dir exec-path)))
       (skip-unless (executable-find "rass"))
@@ -1244,18 +1330,13 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                         eglot-typescript-preset-rass-tools nil))
                  (test-file (my-test-copy-fixture "valid.ts" tmp-dir)))
             (my-test-copy-fixture "package.json" tmp-dir)
-            (let* ((output (shell-command-to-string
-                            (format "python3 %s %s %s --language-id typescript"
-                                    (shell-quote-argument
-                                     my-test-live-rass-client)
-                                    (shell-quote-argument path)
-                                    (shell-quote-argument test-file))))
-                   (result (json-parse-string output :object-type 'alist)))
-              (let-alist result
-                (should .initialized))))))))
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "typescript" tmp-dir)
+             '()))))))
 
   (ert-deftest ts-preset--live-rass-tsbiome ()
-    "Live: rass with typescript + biome."
+    "Live: rass with typescript + biome produces no diagnostics on valid file."
     (skip-unless (my-test--live-local-bins-available-p))
     (let ((exec-path (cons my-test-local-bin-dir exec-path)))
       (skip-unless (executable-find "rass"))
@@ -1268,15 +1349,11 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (path (eglot-typescript-preset--rass-preset-path
                         eglot-typescript-preset-rass-tools nil))
                  (test-file (my-test-copy-fixture "valid.ts" tmp-dir)))
-            (let* ((output (shell-command-to-string
-                            (format "python3 %s %s %s --language-id typescript"
-                                    (shell-quote-argument
-                                     my-test-live-rass-client)
-                                    (shell-quote-argument path)
-                                    (shell-quote-argument test-file))))
-                   (result (json-parse-string output :object-type 'alist)))
-              (let-alist result
-                (should .initialized))))))))
+            (my-test-copy-fixture "package.json" tmp-dir)
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "typescript" tmp-dir)
+             '()))))))
 
   (ert-deftest ts-preset--live-diag-ts-biome-debugger ()
     "Live diagnostic: biome flags debugger statement in TS file."
@@ -1294,18 +1371,14 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (test-file (my-test-copy-fixture
                              "debugger.ts" tmp-dir)))
             (my-test-copy-fixture "package.json" tmp-dir)
-            (let-alist (my-test--run-rass-with-diagnostics
-                        path test-file "typescript" tmp-dir)
-              (should .initialized)
-              (should (cl-some (lambda (src)
-                                 (string-match-p "Biome\\|biome" src))
-                               (append .diagnosticSources nil)))
-              (should (cl-some (lambda (code)
-                                 (string-match-p "noDebugger" code))
-                               (append .diagnosticCodes nil)))))))))
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "typescript" tmp-dir)
+             '("lint/suspicious/noDebugger")
+             '("biome")))))))
 
   (ert-deftest ts-preset--live-rass-ts-eslint-oxlint ()
-    "Live: rass with typescript-language-server + eslint + oxlint."
+    "Live: rass with ts + eslint + oxlint produces no diagnostics on valid file."
     (skip-unless (my-test--live-local-bins-available-p))
     (let ((exec-path (cons my-test-local-bin-dir exec-path)))
       (skip-unless (executable-find "rass"))
@@ -1318,20 +1391,19 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                   '(typescript-language-server eslint oxlint))
                  (path (eglot-typescript-preset--rass-preset-path
                         eglot-typescript-preset-rass-tools nil))
-                 (test-file (my-test-copy-fixture "valid.ts" tmp-dir)))
-            (my-test-copy-fixture "package.json" tmp-dir)
-            (let* ((output (shell-command-to-string
-                            (format "python3 %s %s %s --language-id typescript"
-                                    (shell-quote-argument
-                                     my-test-live-rass-client)
-                                    (shell-quote-argument path)
-                                    (shell-quote-argument test-file))))
-                   (result (json-parse-string output :object-type 'alist)))
-              (let-alist result
-                (should .initialized))))))))
+                 (test-file (my-test-copy-fixture
+                             "eslint-oxlint/valid.ts" tmp-dir "valid.ts")))
+            (my-test-copy-fixture "eslint-oxlint/package.json" tmp-dir "package.json")
+            (my-test-copy-fixture
+             "eslint-oxlint/eslint.config.js" tmp-dir "eslint.config.js")
+            (my-test-link-node-modules tmp-dir)
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "typescript" tmp-dir)
+             '()))))))
 
   (ert-deftest ts-preset--live-rass-astro-eslint-oxlint ()
-    "Live: rass with astro-ls + eslint + oxlint."
+    "Live: rass with astro + eslint + oxlint produces no diagnostics on valid file."
     (skip-unless (my-test--live-local-bins-available-p))
     (let ((exec-path (cons my-test-local-bin-dir exec-path)))
       (skip-unless (executable-find "rass"))
@@ -1343,17 +1415,16 @@ workspace root.  TIMEOUT defaults to 20 seconds."
           (let* ((eglot-typescript-preset-tsdk my-test-local-tsdk)
                  (tools '(astro-ls eslint oxlint))
                  (path (eglot-typescript-preset--rass-preset-path tools nil))
-                 (test-file (my-test-copy-fixture "valid.astro" tmp-dir)))
-            (my-test-copy-fixture "package.json" tmp-dir)
-            (let* ((output (shell-command-to-string
-                            (format "python3 %s %s %s --language-id astro"
-                                    (shell-quote-argument
-                                     my-test-live-rass-client)
-                                    (shell-quote-argument path)
-                                    (shell-quote-argument test-file))))
-                   (result (json-parse-string output :object-type 'alist)))
-              (let-alist result
-                (should .initialized))))))))
+                 (test-file (my-test-copy-fixture
+                             "eslint-oxlint/valid.astro" tmp-dir "valid.astro")))
+            (my-test-copy-fixture "eslint-oxlint/package.json" tmp-dir "package.json")
+            (my-test-copy-fixture
+             "eslint-oxlint/eslint.config.js" tmp-dir "eslint.config.js")
+            (my-test-link-node-modules tmp-dir)
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "astro" tmp-dir 30)
+             '()))))))
 
   ;; --- Diagnostic verification tests ---
 
@@ -1371,15 +1442,13 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (path (eglot-typescript-preset--rass-preset-path
                         eglot-typescript-preset-rass-tools nil))
                  (test-file (my-test-copy-fixture
-                             "debugger.ts" tmp-dir)))
-            (my-test-copy-fixture "package.json" tmp-dir)
-            (let-alist (my-test--run-rass-with-diagnostics
-                        path test-file "typescript" tmp-dir)
-              (should .initialized)
-              (should (member "oxc" (append .diagnosticSources nil)))
-              (should (cl-some (lambda (code)
-                                 (string-match-p "no-debugger" code))
-                               (append .diagnosticCodes nil)))))))))
+                             "oxlint/debugger.ts" tmp-dir "debugger.ts")))
+            (my-test-copy-fixture "oxlint/package.json" tmp-dir "package.json")
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "typescript" tmp-dir)
+             '("eslint(no-debugger)")
+             '("oxc")))))))
 
   (ert-deftest ts-preset--live-diag-ts-type-error ()
     "Live diagnostic: typescript-language-server flags type mismatch."
@@ -1395,14 +1464,13 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (path (eglot-typescript-preset--rass-preset-path
                         eglot-typescript-preset-rass-tools nil))
                  (test-file (my-test-copy-fixture
-                             "type-error.ts" tmp-dir)))
-            (my-test-copy-fixture "package.json" tmp-dir)
-            (let-alist (my-test--run-rass-with-diagnostics
-                        path test-file "typescript" tmp-dir)
-              (should .initialized)
-              (should (member "typescript" (append .diagnosticSources nil)))
-              (should (member "2322"
-                              (append .diagnosticCodes nil)))))))))
+                             "oxlint/type-error.ts" tmp-dir "type-error.ts")))
+            (my-test-copy-fixture "oxlint/package.json" tmp-dir "package.json")
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "typescript" tmp-dir)
+             '("2322" "eslint(no-unused-vars)")
+             '("oxc" "typescript")))))))
 
   (ert-deftest ts-preset--live-diag-astro-oxlint-debugger ()
     "Live diagnostic: oxlint flags debugger in Astro frontmatter."
@@ -1417,15 +1485,13 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (tools '(astro-ls oxlint))
                  (path (eglot-typescript-preset--rass-preset-path tools nil))
                  (test-file (my-test-copy-fixture
-                             "debugger.astro" tmp-dir)))
-            (my-test-copy-fixture "package.json" tmp-dir)
-            (let-alist (my-test--run-rass-with-diagnostics
-                        path test-file "astro" tmp-dir 30)
-              (should .initialized)
-              (should (member "oxc" (append .diagnosticSources nil)))
-              (should (cl-some (lambda (code)
-                                 (string-match-p "no-debugger" code))
-                               (append .diagnosticCodes nil)))))))))
+                             "oxlint/debugger.astro" tmp-dir "debugger.astro")))
+            (my-test-copy-fixture "oxlint/package.json" tmp-dir "package.json")
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "astro" tmp-dir 30)
+             '("eslint(no-debugger)")
+             '("oxc")))))))
 
   (ert-deftest ts-preset--live-diag-astro-type-error ()
     "Live diagnostic: astro-ls flags type mismatch in frontmatter."
@@ -1441,14 +1507,116 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (tools '(astro-ls eslint oxlint))
                  (path (eglot-typescript-preset--rass-preset-path tools nil))
                  (test-file (my-test-copy-fixture
-                             "type-error.astro" tmp-dir)))
-            (my-test-copy-fixture "package.json" tmp-dir)
-            (let-alist (my-test--run-rass-with-diagnostics
-                        path test-file "astro" tmp-dir 30)
-              (should .initialized)
-              (should (member "ts" (append .diagnosticSources nil)))
-              (should (member "2322"
-                              (append .diagnosticCodes nil)))))))))
+                             "eslint-oxlint/type-error.astro" tmp-dir "type-error.astro")))
+            (my-test-copy-fixture "eslint-oxlint/package.json" tmp-dir "package.json")
+            (my-test-copy-fixture
+             "eslint-oxlint/eslint.config.js" tmp-dir "eslint.config.js")
+            (my-test-link-node-modules tmp-dir)
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "astro" tmp-dir 30)
+             '("2322" "6133")
+             '("ts")))))))
+
+  (ert-deftest ts-preset--live-diag-ts-eslint-debugger ()
+    "Live diagnostic: eslint flags debugger statement in TS file."
+    (skip-unless (my-test--live-local-bins-available-p))
+    (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+      (skip-unless (executable-find "rass"))
+      (skip-unless (executable-find "typescript-language-server"))
+      (skip-unless (executable-find "vscode-eslint-language-server"))
+      (my-test-with-tmp-dir tmp-dir
+        (my-test-with-project-env tmp-dir
+          (let* ((eglot-typescript-preset-rass-tools
+                  '(typescript-language-server eslint))
+                 (path (eglot-typescript-preset--rass-preset-path
+                        eglot-typescript-preset-rass-tools nil))
+                 (test-file (my-test-copy-fixture
+                             "eslint/debugger.ts" tmp-dir "debugger.ts")))
+            (my-test-copy-fixture "eslint/package.json" tmp-dir "package.json")
+            (my-test-copy-fixture
+             "eslint/eslint.config.js" tmp-dir "eslint.config.js")
+            (my-test-link-node-modules tmp-dir)
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "typescript" tmp-dir)
+             '("no-debugger")
+             '("eslint")))))))
+
+  (ert-deftest ts-preset--live-diag-astro-eslint-debugger ()
+    "Live diagnostic: eslint flags debugger in Astro frontmatter."
+    (skip-unless (my-test--live-local-bins-available-p))
+    (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+      (skip-unless (executable-find "rass"))
+      (skip-unless (executable-find "astro-ls"))
+      (skip-unless (executable-find "vscode-eslint-language-server"))
+      (my-test-with-tmp-dir tmp-dir
+        (my-test-with-project-env tmp-dir
+          (let* ((eglot-typescript-preset-tsdk my-test-local-tsdk)
+                 (tools '(astro-ls eslint))
+                 (path (eglot-typescript-preset--rass-preset-path tools nil))
+                 (test-file (my-test-copy-fixture
+                             "eslint/debugger.astro" tmp-dir "debugger.astro")))
+            (my-test-copy-fixture "eslint/package.json" tmp-dir "package.json")
+            (my-test-copy-fixture
+             "eslint/eslint.config.js" tmp-dir "eslint.config.js")
+            (my-test-link-node-modules tmp-dir)
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "astro" tmp-dir 30)
+             '("no-debugger")
+             '("eslint")))))))
+
+  (ert-deftest ts-preset--live-diag-ts-eslint-oxlint-debugger ()
+    "Live diagnostic: eslint+oxlint with plugin, only oxlint flags debugger."
+    (skip-unless (my-test--live-local-bins-available-p))
+    (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+      (skip-unless (executable-find "rass"))
+      (skip-unless (executable-find "typescript-language-server"))
+      (skip-unless (executable-find "vscode-eslint-language-server"))
+      (skip-unless (executable-find "oxlint"))
+      (my-test-with-tmp-dir tmp-dir
+        (my-test-with-project-env tmp-dir
+          (let* ((eglot-typescript-preset-rass-tools
+                  '(typescript-language-server eslint oxlint))
+                 (path (eglot-typescript-preset--rass-preset-path
+                        eglot-typescript-preset-rass-tools nil))
+                 (test-file (my-test-copy-fixture
+                             "eslint-oxlint/debugger.ts" tmp-dir "debugger.ts")))
+            (my-test-copy-fixture "eslint-oxlint/package.json" tmp-dir "package.json")
+            (my-test-copy-fixture
+             "eslint-oxlint/eslint.config.js" tmp-dir "eslint.config.js")
+            (my-test-link-node-modules tmp-dir)
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "typescript" tmp-dir)
+             '("eslint(no-debugger)")
+             '("oxc")))))))
+
+  (ert-deftest ts-preset--live-diag-astro-eslint-oxlint-debugger ()
+    "Live diagnostic: eslint+oxlint with plugin in Astro, only oxlint flags debugger."
+    (skip-unless (my-test--live-local-bins-available-p))
+    (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+      (skip-unless (executable-find "rass"))
+      (skip-unless (executable-find "astro-ls"))
+      (skip-unless (executable-find "vscode-eslint-language-server"))
+      (skip-unless (executable-find "oxlint"))
+      (my-test-with-tmp-dir tmp-dir
+        (my-test-with-project-env tmp-dir
+          (let* ((eglot-typescript-preset-tsdk my-test-local-tsdk)
+                 (tools '(astro-ls eslint oxlint))
+                 (path (eglot-typescript-preset--rass-preset-path tools nil))
+                 (test-file (my-test-copy-fixture
+                             "eslint-oxlint/debugger.astro" tmp-dir "debugger.astro")))
+            (my-test-copy-fixture "eslint-oxlint/package.json" tmp-dir "package.json")
+            (my-test-copy-fixture
+             "eslint-oxlint/eslint.config.js" tmp-dir "eslint.config.js")
+            (my-test-link-node-modules tmp-dir)
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "astro" tmp-dir 30)
+             '("eslint(no-debugger)")
+             '("oxc")))))))
 
   (ert-deftest ts-preset--live-diag-tw-invalid-directive ()
     "Live diagnostic: tailwindcss-language-server flags invalid directive."
@@ -1465,14 +1633,11 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (test-file (my-test-copy-fixture
                              "tw-invalid-directive.css" tmp-dir)))
             (my-test-copy-fixture "package.json" tmp-dir)
-            (let-alist (my-test--run-rass-with-diagnostics
-                        path test-file "css" tmp-dir)
-              (should .initialized)
-              (should (cl-some (lambda (src)
-                                 (string-match-p "tailwindcss" src))
-                               (append .diagnosticSources nil)))
-              (should (member "invalidTailwindDirective"
-                              (append .diagnosticCodes nil)))))))))
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "css" tmp-dir)
+             '("invalidTailwindDirective")
+             '("tailwindcss")))))))
 
   (ert-deftest ts-preset--live-diag-tw-ts-combo ()
     "Live diagnostic: typescript + tailwindcss-language-server together."
@@ -1490,14 +1655,11 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (test-file (my-test-copy-fixture
                              "tw-invalid-directive.css" tmp-dir)))
             (my-test-copy-fixture "package.json" tmp-dir)
-            (let-alist (my-test--run-rass-with-diagnostics
-                        path test-file "css" tmp-dir)
-              (should .initialized)
-              (should (cl-some (lambda (src)
-                                 (string-match-p "tailwindcss" src))
-                               (append .diagnosticSources nil)))
-              (should (member "invalidTailwindDirective"
-                              (append .diagnosticCodes nil)))))))))
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "css" tmp-dir)
+             '("invalidTailwindDirective")
+             '("tailwindcss")))))))
 
   (ert-deftest ts-preset--live-diag-tw-astro-css-conflict ()
     "Live diagnostic: tailwindcss flags conflicting classes in Astro file."
@@ -1514,14 +1676,11 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (tw-dir (my-test-copy-fixture-dir "tw-project" tmp-dir))
                  (test-file (expand-file-name "css-conflict.astro" tw-dir)))
             (my-test-copy-fixture "package.json" tmp-dir)
-            (let-alist (my-test--run-rass-with-diagnostics
-                        path test-file "astro" tw-dir)
-              (should .initialized)
-              (should (cl-some (lambda (src)
-                                 (string-match-p "tailwindcss" src))
-                               (append .diagnosticSources nil)))
-              (should (member "cssConflict"
-                              (append .diagnosticCodes nil)))))))))
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "astro" tw-dir)
+             '("cssConflict")
+             '("tailwindcss")))))))
 
   (ert-deftest ts-preset--live-diag-css-rass-invalid-directive ()
     "Live diagnostic: vscode-css + tailwindcss via rass flags invalid directive."
@@ -1539,14 +1698,11 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (test-file (my-test-copy-fixture
                              "tw-invalid-directive.css" tmp-dir)))
             (my-test-copy-fixture "package.json" tmp-dir)
-            (let-alist (my-test--run-rass-with-diagnostics
-                        path test-file "css" tmp-dir)
-              (should .initialized)
-              (should (cl-some (lambda (src)
-                                 (string-match-p "tailwindcss" src))
-                               (append .diagnosticSources nil)))
-              (should (member "invalidTailwindDirective"
-                              (append .diagnosticCodes nil)))))))))
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "css" tmp-dir)
+             '("invalidTailwindDirective")
+             '("tailwindcss")))))))
 
   (ert-deftest ts-preset--live-diag-css-rass-unknown-property ()
     "Live diagnostic: vscode-css via rass flags unknown CSS property."
@@ -1563,19 +1719,16 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (test-file (my-test-copy-fixture
                              "css-unknown-property.css" tmp-dir)))
             (my-test-copy-fixture "package.json" tmp-dir)
-            (let-alist (my-test--run-rass-with-diagnostics
-                        path test-file "css" tmp-dir)
-              (should .initialized)
-              (should (cl-some (lambda (src)
-                                 (string-match-p "css" src))
-                               (append .diagnosticSources nil)))
-              (should (member "unknownProperties"
-                              (append .diagnosticCodes nil)))))))))
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "css" tmp-dir)
+             '("unknownProperties")
+             '("css")))))))
 
   ;; --- Vue rass tests ---
 
   (ert-deftest ts-preset--live-rass-vue-tailwind ()
-    "Live: rass with vue-language-server + tailwindcss."
+    "Live: rass with vue-language-server + tailwindcss produces no diagnostics."
     (skip-unless (my-test--live-local-bins-available-p))
     (let ((exec-path (cons my-test-local-bin-dir exec-path)))
       (skip-unless (executable-find "rass"))
@@ -1588,15 +1741,10 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (path (eglot-typescript-preset--rass-preset-path tools nil))
                  (test-file (my-test-copy-fixture "valid.vue" tmp-dir)))
             (my-test-copy-fixture "package.json" tmp-dir)
-            (let* ((output (shell-command-to-string
-                            (format "python3 %s %s %s --language-id vue"
-                                    (shell-quote-argument
-                                     my-test-live-rass-client)
-                                    (shell-quote-argument path)
-                                    (shell-quote-argument test-file))))
-                   (result (json-parse-string output :object-type 'alist)))
-              (let-alist result
-                (should .initialized))))))))
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "vue" tmp-dir 30)
+             '()))))))
 
   (ert-deftest ts-preset--live-diag-vue-template-error ()
     "Live diagnostic: vue-language-server flags template compilation error."
@@ -1612,14 +1760,11 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (test-file (my-test-copy-fixture
                              "template-error.vue" tmp-dir)))
             (my-test-copy-fixture "package.json" tmp-dir)
-            (let-alist (my-test--run-rass-with-diagnostics
-                        path test-file "vue" tmp-dir 30)
-              (should .initialized)
-              (should (cl-some (lambda (src)
-                                 (string-match-p "vue" src))
-                               (append .diagnosticSources nil)))
-              (should (member "28"
-                              (append .diagnosticCodes nil)))))))))
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "vue" tmp-dir 30)
+             '("28")
+             '("vue")))))))
 
   (ert-deftest ts-preset--live-diag-vue-valid-no-errors ()
     "Live diagnostic: valid.vue produces zero diagnostics with hybrid mode."
@@ -1635,10 +1780,10 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (path (eglot-typescript-preset--rass-preset-path tools nil))
                  (test-file (my-test-copy-fixture "valid.vue" tmp-dir)))
             (my-test-copy-fixture "package.json" tmp-dir)
-            (let-alist (my-test--run-rass-with-diagnostics
-                        path test-file "vue" tmp-dir 30)
-              (should .initialized)
-              (should (null (append .diagnosticCodes nil)))))))))
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "vue" tmp-dir 30)
+             '()))))))
 
   (ert-deftest ts-preset--live-diag-vue-type-error ()
     "Live diagnostic: typescript-language-server flags type error in Vue file."
@@ -1655,13 +1800,11 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (test-file (my-test-copy-fixture
                              "type-error.vue" tmp-dir)))
             (my-test-copy-fixture "package.json" tmp-dir)
-            (let-alist (my-test--run-rass-with-diagnostics
-                        path test-file "vue" tmp-dir 30)
-              (should .initialized)
-              (should (member "typescript"
-                              (append .diagnosticSources nil)))
-              (should (member "2322"
-                              (append .diagnosticCodes nil)))))))))
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "vue" tmp-dir 30)
+             '("2322" "6133")
+             '("typescript")))))))
 
   (ert-deftest ts-preset--live-diag-vue-tw-css-conflict ()
     "Live diagnostic: tailwindcss flags conflicting classes in Vue file."
@@ -1678,14 +1821,11 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                  (tw-dir (my-test-copy-fixture-dir "tw-project" tmp-dir))
                  (test-file (expand-file-name "css-conflict.vue" tw-dir)))
             (my-test-copy-fixture "package.json" tmp-dir)
-            (let-alist (my-test--run-rass-with-diagnostics
-                        path test-file "vue" tw-dir 30)
-              (should .initialized)
-              (should (cl-some (lambda (src)
-                                 (string-match-p "tailwindcss" src))
-                               (append .diagnosticSources nil)))
-              (should (member "cssConflict"
-                              (append .diagnosticCodes nil)))))))))
+            (my-test--assert-diagnostics
+             (my-test--run-rass-with-diagnostics
+              path test-file "vue" tw-dir 30)
+             '("cssConflict")
+             '("tailwindcss")))))))
 
   ) ;; end of (when ... live tests)
 

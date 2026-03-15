@@ -67,10 +67,11 @@ def _find_workspace_folder(scope_uri: str) -> dict | None:
 def _eslint_config(workspace_folder: dict | None = None) -> dict:
     """Return base ESLint configuration."""
     config: dict[str, Any] = {
-        "validate": "probe",
+        "experimental": {},
         "problems": {},
         "rulesCustomizations": [],
         "nodePath": None,
+        "validate": "probe",
     }
     if workspace_folder:
         config["workspaceFolder"] = workspace_folder
