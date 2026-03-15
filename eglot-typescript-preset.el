@@ -1,6 +1,6 @@
 ;;; eglot-typescript-preset.el --- Eglot preset for TypeScript -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2025-2026 Michael Olson <mwolson@gnu.org>
+;; Copyright (C) 2026 Michael Olson <mwolson@gnu.org>
 
 ;; Version: 0.1.0
 ;; Author: Michael Olson <mwolson@gnu.org>
