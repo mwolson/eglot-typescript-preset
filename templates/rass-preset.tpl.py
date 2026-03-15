@@ -10,6 +10,7 @@ from rassumfrassum.util import dmerge
 SERVERS: list[list[str]] = __SERVERS__  # type: ignore[name-defined]
 INIT_OPTIONS: dict[str, Any] | None = __INIT_OPTIONS__  # type: ignore[name-defined]
 ESLINT_LOGIC: bool = __ESLINT_LOGIC__  # type: ignore[name-defined]
+VUE_TS_PLUGIN: str | None = __VUE_TS_PLUGIN__  # type: ignore[name-defined]
 
 
 def _server_kind(name: str) -> str | None:
@@ -80,11 +81,29 @@ class GeneratedTypeScriptLogic(LspLogic):
     def process_request(
         self, method: str, params: JSON, server: Server
     ) -> None:
-        if method == "initialize" and INIT_OPTIONS and server == self.primary:
-            params["initializationOptions"] = dmerge(
-                params.get("initializationOptions") or {},
-                INIT_OPTIONS,
-            )
+        if method == "initialize":
+            if INIT_OPTIONS and server == self.primary:
+                params["initializationOptions"] = dmerge(
+                    params.get("initializationOptions") or {},
+                    INIT_OPTIONS,
+                )
+            if (
+                VUE_TS_PLUGIN
+                and _server_kind(server.name)
+                == "typescript-language-server"
+            ):
+                init_opts = params.get("initializationOptions") or {}
+                plugins = list(init_opts.get("plugins", []))
+                plugins.append(
+                    {
+                        "name": "@vue/typescript-plugin",
+                        "location": VUE_TS_PLUGIN,
+                        "languages": ["vue"],
+                    }
+                )
+                params["initializationOptions"] = dmerge(
+                    init_opts, {"plugins": plugins}
+                )
         super().process_request(method, params, server)
 
     async def on_server_notification(

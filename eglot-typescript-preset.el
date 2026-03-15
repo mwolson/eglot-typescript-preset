@@ -139,7 +139,7 @@ When non-nil, this command is used verbatim and no generated preset is written."
   :group 'eglot-typescript-preset)
 
 ;;;###autoload
-(defcustom eglot-typescript-preset-vue-lsp-server 'vue-language-server
+(defcustom eglot-typescript-preset-vue-lsp-server 'rass
   "LSP server to use for Vue files."
   :type '(choice (const :tag "vue-language-server" vue-language-server)
                  (const :tag "rass" rass)
@@ -223,7 +223,7 @@ Same format as `eglot-typescript-preset-rass-tools'."
 
 ;;;###autoload
 (defcustom eglot-typescript-preset-vue-rass-tools
-  '(vue-language-server tailwindcss-language-server)
+  '(vue-language-server typescript-language-server tailwindcss-language-server)
   "Tools included in the generated `rass` preset for Vue files.
 
 Same format as `eglot-typescript-preset-rass-tools'."
@@ -624,17 +624,50 @@ REPLACEMENTS is an alist mapping literal placeholder strings to values."
   "Return initializationOptions for the Vue language server."
   (let ((tsdk (eglot-typescript-preset--find-tsdk)))
     (if tsdk
-        `(:typescript (:tsdk ,tsdk) :vue (:hybridMode :json-false))
-      '(:vue (:hybridMode :json-false)))))
+        `(:typescript (:tsdk ,tsdk) :vue (:hybridMode t))
+      '(:vue (:hybridMode t)))))
+
+(defun eglot-typescript-preset--find-vue-ts-plugin ()
+  "Find the @vue/typescript-plugin directory.
+Walk up from the buffer's directory looking for node_modules that
+contain the plugin.  Fall back to resolving via the
+vue-language-server binary."
+  (or (when-let* ((file (or (buffer-file-name) default-directory))
+                  (start (file-name-directory (expand-file-name file)))
+                  (nm (locate-dominating-file
+                       start
+                       (lambda (d)
+                         (file-directory-p
+                          (expand-file-name
+                           "node_modules/@vue/typescript-plugin" d)))))
+                  (dir (expand-file-name
+                        "node_modules/@vue/typescript-plugin" nm))
+                  ((file-directory-p dir)))
+        dir)
+      (when-let* ((bin (eglot-typescript-preset--resolve-executable
+                        "vue-language-server"))
+                  ((not (string= bin "vue-language-server")))
+                  (real (file-truename bin))
+                  (nm (locate-dominating-file
+                       (file-name-directory real)
+                       (lambda (d)
+                         (file-directory-p
+                          (expand-file-name
+                           "@vue/typescript-plugin" d)))))
+                  (dir (expand-file-name "@vue/typescript-plugin" nm))
+                  ((file-directory-p dir)))
+        dir)))
 
 (defun eglot-typescript-preset--write-rass-preset (path commands
                                                         init-options
-                                                        eslint-logic-p)
+                                                        eslint-logic-p
+                                                        vue-ts-plugin)
   "Write a generated `rass` preset to PATH.
 
 COMMANDS is the list of server commands.
 INIT-OPTIONS, when non-nil, is a plist to inject into `initialize'.
-ESLINT-LOGIC-P, when non-nil, enables ESLint workspace/configuration logic."
+ESLINT-LOGIC-P, when non-nil, enables ESLint workspace/configuration logic.
+VUE-TS-PLUGIN, when non-nil, is the path to @vue/typescript-plugin."
   (eglot-typescript-preset--write-file-if-changed
    path
    (eglot-typescript-preset--render-template
@@ -647,7 +680,11 @@ ESLINT-LOGIC-P, when non-nil, enables ESLint workspace/configuration logic."
               (eglot-typescript-preset--rass-python-literal init-options)
             "None"))
       ("__ESLINT_LOGIC__"
-       . ,(if eslint-logic-p "True" "False"))))))
+       . ,(if eslint-logic-p "True" "False"))
+      ("__VUE_TS_PLUGIN__"
+       . ,(if vue-ts-plugin
+              (format "%S" vue-ts-plugin)
+            "None"))))))
 
 (defun eglot-typescript-preset--rass-preset-path (tools rass-command)
   "Return the generated `rass` preset path for TOOLS.
@@ -671,6 +708,19 @@ Returns the preset path, or nil when RASS-COMMAND is set."
      (has-astro (eglot-typescript-preset--astro-init-options))
      (has-vue (eglot-typescript-preset--vue-init-options)))))
 
+(defun eglot-typescript-preset--rass-vue-ts-plugin-for-tools (commands)
+  "Return the @vue/typescript-plugin path when COMMANDS need it."
+  (let ((has-vue (seq-some (lambda (cmd)
+                             (eq (eglot-typescript-preset--rass-tool-kind cmd)
+                                 'vue-language-server))
+                           commands))
+        (has-ts (seq-some (lambda (cmd)
+                            (eq (eglot-typescript-preset--rass-tool-kind cmd)
+                                'typescript-language-server))
+                          commands)))
+    (when (and has-vue has-ts)
+      (eglot-typescript-preset--find-vue-ts-plugin))))
+
 (defun eglot-typescript-preset--rass-preset-path-1 (tools)
   "Generate and return the `rass` preset path for TOOLS."
   (let* ((tool-specs (mapcar #'eglot-typescript-preset--rass-tool-spec tools))
@@ -679,12 +729,15 @@ Returns the preset path, or nil when RASS-COMMAND is set."
                            tool-specs))
          (init-options
           (eglot-typescript-preset--rass-init-options-for-tools commands))
+         (vue-ts-plugin
+          (eglot-typescript-preset--rass-vue-ts-plugin-for-tools commands))
          (has-eslint (seq-some (lambda (command)
                                  (eq (eglot-typescript-preset--rass-tool-kind
                                       command)
                                      'eslint))
                                commands))
          (contextual-p (or init-options
+                           vue-ts-plugin
                            (seq-some
                             (lambda (tool-spec)
                               (plist-get
@@ -699,11 +752,12 @@ Returns the preset path, or nil when RASS-COMMAND is set."
                                        (vconcat (mapcar #'vconcat commands)))
                                       (when init-options
                                         (eglot-typescript-preset--rass-json-string
-                                         init-options))))
+                                         init-options))
+                                      vue-ts-plugin))
                                "\0"))
                  (eglot-typescript-preset--rass-shared-preset-path tools))))
     (eglot-typescript-preset--write-rass-preset
-     path commands init-options has-eslint)
+     path commands init-options has-eslint vue-ts-plugin)
     (when contextual-p
       (eglot-typescript-preset--cleanup-rass-contextual-presets path))
     path))

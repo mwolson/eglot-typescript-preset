@@ -102,10 +102,11 @@ If TARGET-NAME is non-nil, rename the file."
         (eglot-typescript-preset-css-rass-command nil)
         (eglot-typescript-preset-css-rass-tools
          '(vscode-css-language-server tailwindcss-language-server))
-        (eglot-typescript-preset-vue-lsp-server 'vue-language-server)
+        (eglot-typescript-preset-vue-lsp-server 'rass)
         (eglot-typescript-preset-vue-rass-command nil)
         (eglot-typescript-preset-vue-rass-tools
-         '(vue-language-server tailwindcss-language-server))
+         '(vue-language-server typescript-language-server
+           tailwindcss-language-server))
         (eglot-typescript-preset-rass-max-contextual-presets 50)
         (eglot-typescript-preset-tsdk nil)
         (eglot-typescript-preset-js-project-markers
@@ -566,6 +567,7 @@ the JS project boundary."
          '(("typescript-language-server" "--stdio")
            ("biome" "lsp-proxy"))
          nil
+         nil
          nil)
         (should (file-exists-p path))
         (let ((content (with-temp-buffer
@@ -588,7 +590,8 @@ the JS project boundary."
          '(("typescript-language-server" "--stdio")
            ("vscode-eslint-language-server" "--stdio"))
          nil
-         t)
+         t
+         nil)
         (let ((content (with-temp-buffer
                          (insert-file-contents path)
                          (buffer-string))))
@@ -607,7 +610,8 @@ the JS project boundary."
          '(("astro-ls" "--stdio")
            ("vscode-eslint-language-server" "--stdio"))
          '(:contentIntellisense t :typescript (:tsdk "/path/to/tsdk"))
-         t)
+         t
+         nil)
         (let ((content (with-temp-buffer
                          (insert-file-contents path)
                          (buffer-string))))
@@ -998,7 +1002,8 @@ the JS project boundary."
   "Vue server contact returns vue-language-server with init options."
   (my-test-with-tmp-dir tmp-dir
     (my-test-with-project-env tmp-dir
-      (let ((eglot-typescript-preset-tsdk "/fake/tsdk"))
+      (let ((eglot-typescript-preset-vue-lsp-server 'vue-language-server)
+            (eglot-typescript-preset-tsdk "/fake/tsdk"))
         (let ((contact (eglot-typescript-preset--vue-server-contact nil)))
           (should (listp contact))
           (should (string-match-p "vue-language-server" (car contact)))
@@ -1008,8 +1013,7 @@ the JS project boundary."
   "Vue server contact returns rass command when configured."
   (my-test-with-tmp-dir tmp-dir
     (my-test-with-project-env tmp-dir
-      (let ((eglot-typescript-preset-vue-lsp-server 'rass)
-            (eglot-typescript-preset-tsdk "/fake/tsdk"))
+      (let ((eglot-typescript-preset-tsdk "/fake/tsdk"))
         (let ((contact (eglot-typescript-preset--vue-server-contact nil)))
           (should (listp contact))
           (should (string-match-p "rass" (car contact))))))))
@@ -1018,8 +1022,7 @@ the JS project boundary."
   "Vue server contact uses rass-command verbatim."
   (my-test-with-tmp-dir tmp-dir
     (my-test-with-project-env tmp-dir
-      (let ((eglot-typescript-preset-vue-lsp-server 'rass)
-            (eglot-typescript-preset-vue-rass-command
+      (let ((eglot-typescript-preset-vue-rass-command
              ["rass" "vuetail"]))
         (let ((contact (eglot-typescript-preset--vue-server-contact nil)))
           (should (equal contact '("rass" "vuetail"))))))))
@@ -1033,7 +1036,7 @@ the JS project boundary."
           (should (equal (plist-get (plist-get opts :typescript) :tsdk)
                          "/my/typescript/lib"))
           (should (eq (plist-get (plist-get opts :vue) :hybridMode)
-                      :json-false)))))))
+                      t)))))))
 
 (ert-deftest ts-preset--vue-init-options-without-tsdk ()
   "Vue init options omit tsdk when not available."
@@ -1045,7 +1048,7 @@ the JS project boundary."
           (let ((opts (eglot-typescript-preset--vue-init-options)))
             (should-not (plist-get opts :typescript))
             (should (eq (plist-get (plist-get opts :vue) :hybridMode)
-                        :json-false))))))))
+                        t))))))))
 
 
 ;;; --- Setup tests ---
@@ -1616,6 +1619,48 @@ workspace root.  TIMEOUT defaults to 20 seconds."
                                  (string-match-p "vue" src))
                                (append .diagnosticSources nil)))
               (should (member "28"
+                              (append .diagnosticCodes nil)))))))))
+
+  (ert-deftest ts-preset--live-diag-vue-valid-no-errors ()
+    "Live diagnostic: valid.vue produces zero diagnostics with hybrid mode."
+    (skip-unless (my-test--live-local-bins-available-p))
+    (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+      (skip-unless (executable-find "rass"))
+      (skip-unless (executable-find "vue-language-server"))
+      (skip-unless (executable-find "typescript-language-server"))
+      (my-test-with-tmp-dir tmp-dir
+        (my-test-with-project-env tmp-dir
+          (let* ((eglot-typescript-preset-tsdk my-test-local-tsdk)
+                 (tools '(vue-language-server typescript-language-server))
+                 (path (eglot-typescript-preset--rass-preset-path tools nil))
+                 (test-file (my-test-copy-fixture "valid.vue" tmp-dir)))
+            (my-test-copy-fixture "package.json" tmp-dir)
+            (let-alist (my-test--run-rass-with-diagnostics
+                        path test-file "vue" tmp-dir 30)
+              (should .initialized)
+              (should (null (append .diagnosticCodes nil)))))))))
+
+  (ert-deftest ts-preset--live-diag-vue-type-error ()
+    "Live diagnostic: typescript-language-server flags type error in Vue file."
+    (skip-unless (my-test--live-local-bins-available-p))
+    (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+      (skip-unless (executable-find "rass"))
+      (skip-unless (executable-find "vue-language-server"))
+      (skip-unless (executable-find "typescript-language-server"))
+      (my-test-with-tmp-dir tmp-dir
+        (my-test-with-project-env tmp-dir
+          (let* ((eglot-typescript-preset-tsdk my-test-local-tsdk)
+                 (tools '(vue-language-server typescript-language-server))
+                 (path (eglot-typescript-preset--rass-preset-path tools nil))
+                 (test-file (my-test-copy-fixture
+                             "type-error.vue" tmp-dir)))
+            (my-test-copy-fixture "package.json" tmp-dir)
+            (let-alist (my-test--run-rass-with-diagnostics
+                        path test-file "vue" tmp-dir 30)
+              (should .initialized)
+              (should (member "typescript"
+                              (append .diagnosticSources nil)))
+              (should (member "2322"
                               (append .diagnosticCodes nil)))))))))
 
   (ert-deftest ts-preset--live-diag-vue-tw-css-conflict ()

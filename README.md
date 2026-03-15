@@ -104,18 +104,13 @@ automatic TypeScript SDK detection for the Astro language server.
 
 ### Vue Projects
 
-When `eglot-typescript-preset-vue-lsp-server` is set (default:
-`vue-language-server`), the package configures Eglot for `vue-mode` and
-`vue-ts-mode` buffers. The Vue language server receives TypeScript SDK path and
-`vue.hybridMode` initialization options automatically.
-
-For Vue projects using Tailwind CSS with the `rass` backend:
-
-```elisp
-(setopt eglot-typescript-preset-vue-lsp-server 'rass)
-(setopt eglot-typescript-preset-vue-rass-tools
-        '(vue-language-server tailwindcss-language-server)) ; default
-```
+When `eglot-typescript-preset-vue-lsp-server` is set (default: `rass`), the
+package configures Eglot for `vue-mode` and `vue-ts-mode` buffers. In hybrid
+mode, `vue-language-server` handles Vue-specific features (template errors)
+while `typescript-language-server` with `@vue/typescript-plugin` provides
+TypeScript semantics (type checking, completions). The Vue language server
+receives TypeScript SDK path and `vue.hybridMode` initialization options
+automatically.
 
 ## Configuration
 
@@ -160,9 +155,9 @@ Choose which language server to use for Astro:
 Choose which language server to use for Vue:
 
 ```elisp
-(setopt eglot-typescript-preset-vue-lsp-server 'vue-language-server) ; default
+(setopt eglot-typescript-preset-vue-lsp-server 'rass) ; default
 ;; or
-(setopt eglot-typescript-preset-vue-lsp-server 'rass)
+(setopt eglot-typescript-preset-vue-lsp-server 'vue-language-server)
 ;; or
 (setopt eglot-typescript-preset-vue-lsp-server nil) ; disable Vue support
 ```
@@ -223,7 +218,8 @@ Same as above, but for Vue files:
 
 ```elisp
 (setopt eglot-typescript-preset-vue-rass-tools
-        '(vue-language-server tailwindcss-language-server)) ; default
+        '(vue-language-server typescript-language-server
+          tailwindcss-language-server)) ; default
 ```
 
 ### `eglot-typescript-preset-rass-command`
