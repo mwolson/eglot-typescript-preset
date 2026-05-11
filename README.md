@@ -548,6 +548,15 @@ Same as above, but for Svelte files:
 (setopt eglot-typescript-preset-svelte-rass-command ["rass" "sveltetail"])
 ```
 
+### `eglot-typescript-preset-rass-generated-directory`
+
+Directory where generated `rass` presets are written:
+
+```elisp
+(setopt eglot-typescript-preset-rass-generated-directory
+        (expand-file-name "eglot-typescript-preset/" user-emacs-directory)) ; default
+```
+
 ### `eglot-typescript-preset-tsdk`
 
 Fallback path to the TypeScript SDK `lib` directory, used by the Astro, Vue, and
@@ -714,10 +723,10 @@ project.
 - If `typescript-language-server` or other tools are installed only in a
   project-local `node_modules`, the package will prefer those executables
   automatically.
-- If you use the `rass` backend, the package generates a preset under your Emacs
-  directory and updates it as needed. Context-free presets are reused across
-  buffers, while project-local `node_modules` and Astro/Vue/Svelte TSDK cases
-  keep separate generated files.
+- If you use the `rass` backend, the package generates a preset under
+  `eglot-typescript-preset-rass-generated-directory` and updates it as needed.
+  Context-free presets are reused across buffers, while project-local
+  `node_modules` and Astro/Vue/Svelte TSDK cases keep separate generated files.
 - The CSS `rass` backend combines `vscode-css-language-server` with
   `tailwindcss-language-server` by default. If you do not use Tailwind CSS, set
   `eglot-typescript-preset-css-lsp-server` to `vscode-css-language-server` for

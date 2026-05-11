@@ -195,6 +195,13 @@ When non-nil, this command is used verbatim and no generated preset is written."
            :match-alternatives (eglot-typescript-preset--rass-command-vector-p)))
   :group 'eglot-typescript-preset)
 
+;;;###autoload
+(defcustom eglot-typescript-preset-rass-generated-directory
+  (expand-file-name "eglot-typescript-preset/" user-emacs-directory)
+  "Directory where generated `rass` presets are written."
+  :type 'directory
+  :group 'eglot-typescript-preset)
+
 (defcustom eglot-typescript-preset-rass-max-contextual-presets 50
   "Maximum number of contextual generated `rass` presets to keep.
 
@@ -557,7 +564,8 @@ Like JSON but with True/False/None instead of true/false/null."
 
 (defun eglot-typescript-preset--rass-generated-dir ()
   "Return the directory used for generated `rass` presets."
-  (expand-file-name "eglot-typescript-preset/" user-emacs-directory))
+  (file-name-as-directory
+   (expand-file-name eglot-typescript-preset-rass-generated-directory)))
 
 (defun eglot-typescript-preset--library-dir ()
   "Return directory containing the installed library."

@@ -118,6 +118,8 @@ If TARGET-NAME is non-nil, rename the file."
         (eglot-typescript-preset-svelte-rass-tools
          '( svelte-language-server typescript-language-server
             tailwindcss-language-server))
+        (eglot-typescript-preset-rass-generated-directory
+         (expand-file-name "eglot-typescript-preset/" tmp-dir))
         (eglot-typescript-preset-rass-max-contextual-presets 50)
         (eglot-typescript-preset-tsdk nil)
         (eglot-typescript-preset-js-project-markers
@@ -602,6 +604,18 @@ the JS project boundary."
                    "test-hash-input")))
         (should (string-match-p "rass-preset-contextual-" path))
         (should (string-match-p "\\.py\\'" path))))))
+
+(ert-deftest ts-preset--rass-generated-directory-controls-preset-path ()
+  "Custom generated directory controls preset paths."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let* ((custom-dir (expand-file-name "custom-generated/" tmp-dir))
+             (eglot-typescript-preset-rass-generated-directory custom-dir)
+             (path (eglot-typescript-preset--rass-shared-preset-path
+                    '(typescript-language-server eslint))))
+        (should (string-prefix-p
+                 (file-name-as-directory custom-dir)
+                 path))))))
 
 
 ;;; --- Preset write tests ---
