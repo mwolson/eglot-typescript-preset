@@ -418,6 +418,8 @@ the JS project boundary."
   (should (eq (eglot-typescript-preset--tool-kind-from-name
                "tailwindcss-language-server")
               'tailwindcss-language-server))
+  (should (eq (eglot-typescript-preset--tool-kind-from-name "tsgo")
+              'typescript-language-server))
   (should (eq (eglot-typescript-preset--tool-kind-from-name
                "vscode-css-language-server")
               'vscode-css-language-server))
@@ -490,6 +492,29 @@ the JS project boundary."
                   'tailwindcss-language-server)))
         (should (equal (cadr cmd) "--stdio"))))))
 
+(ert-deftest ts-preset--rass-tool-command-tsgo ()
+  "Generate tsgo command."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let ((cmd (eglot-typescript-preset--rass-tool-command 'tsgo)))
+        (should (equal (cdr cmd) '("--lsp" "--stdio")))))))
+
+(ert-deftest ts-preset--rass-tool-command-tsgo-source-fixture ()
+  "Resolve the source tsgo fixture through the repo-local executable."
+  (let ((src-file (expand-file-name "tsgo/type-error.ts" my-test-fixtures-dir))
+        (tsgo (expand-file-name "tsgo" my-test-local-bin-dir)))
+    (skip-unless (file-executable-p tsgo))
+    (my-test-with-tmp-dir tmp-dir
+      (my-test-with-project-env tmp-dir
+        (let ((buffer (find-file-noselect src-file)))
+          (unwind-protect
+              (with-current-buffer buffer
+                (let ((cmd (eglot-typescript-preset--rass-tool-command
+                            'tsgo)))
+                  (should (equal (car cmd) tsgo))
+                  (should (equal (cdr cmd) '("--lsp" "--stdio")))))
+            (kill-buffer buffer)))))))
+
 (ert-deftest ts-preset--rass-tool-command-vscode-css ()
   "Generate vscode-css-language-server command."
   (my-test-with-tmp-dir tmp-dir
@@ -522,6 +547,24 @@ the JS project boundary."
                   ["custom-tool" "--flag"])))
         (should (equal cmd '("custom-tool" "--flag")))))))
 
+(ert-deftest ts-preset--rass-tool-command-vector-tsgo-local ()
+  "Resolve project-local tsgo command vectors."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let* ((project-dir (expand-file-name "myproject/" tmp-dir))
+             (bin-dir (expand-file-name "node_modules/.bin/" project-dir))
+             (tsgo (expand-file-name "tsgo" bin-dir))
+             (src-file (expand-file-name "index.ts" project-dir)))
+        (make-directory bin-dir t)
+        (with-temp-file (expand-file-name "package.json" project-dir)
+          (insert "{}"))
+        (my-test-write-executable tsgo)
+        (with-temp-buffer
+          (setq buffer-file-name src-file)
+          (let ((cmd (eglot-typescript-preset--rass-tool-command
+                      ["tsgo" "--lsp" "--stdio"])))
+            (should (equal cmd (list tsgo "--lsp" "--stdio")))))))))
+
 (ert-deftest ts-preset--rass-tool-command-unsupported ()
   "Error on unsupported tool entries."
   (my-test-with-tmp-dir tmp-dir
@@ -550,6 +593,8 @@ the JS project boundary."
   (should (string= (eglot-typescript-preset--rass-tool-label
                     'tailwindcss-language-server)
                    "tailwindcss-language-server"))
+  (should (string= (eglot-typescript-preset--rass-tool-label 'tsgo)
+                   "tsgo"))
   (should (string= (eglot-typescript-preset--rass-tool-label
                     'vscode-css-language-server)
                    "vscode-css-language-server"))
@@ -817,6 +862,24 @@ the JS project boundary."
             (should path)
             (should (string-match-p "rass-preset-contextual-" path))))))))
 
+(ert-deftest ts-preset--rass-preset-path-contextual-with-local-tsgo ()
+  "Generate contextual preset when tsgo resolves to node_modules."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let* ((project-dir (expand-file-name "myproject/" tmp-dir))
+             (bin-dir (expand-file-name "node_modules/.bin/" project-dir))
+             (src-file (expand-file-name "index.ts" project-dir)))
+        (make-directory bin-dir t)
+        (with-temp-file (expand-file-name "package.json" project-dir)
+          (insert "{}"))
+        (my-test-write-executable (expand-file-name "tsgo" bin-dir))
+        (with-temp-buffer
+          (setq buffer-file-name src-file)
+          (let ((path (eglot-typescript-preset--rass-preset-path
+                       '(tsgo eslint) nil)))
+            (should path)
+            (should (string-match-p "rass-preset-contextual-" path))))))))
+
 
 ;;; --- Template rendering tests ---
 
@@ -839,7 +902,16 @@ the JS project boundary."
             (should (equal .eslintLogic :false))
             (should (equal .initOptions :null))
             (should (equal .initOptionsScoping :null))
+            (should (equal .unsupportedRegistrationResponse :null))
             (should .hasLogicClass)
+            (let-alist .diagnosticPullRequest
+              (should (equal .request.method "textDocument/diagnostic"))
+              (should-not (assoc 'previousResultId .request.params))
+              (should (equal .notification.method "$/streamDiagnostics"))
+              (should (equal .notification.params.diagnostics
+                             [((code . 2322)
+                               (message . "Type mismatch")
+                               (source . "tsgo"))])))
             (let-alist .serverKind
               (should (equal .typescript-language-server
                              "typescript-language-server"))
@@ -851,6 +923,7 @@ the JS project boundary."
               (should (equal .astro-ls "astro-ls"))
               (should (equal .tailwindcss-language-server
                              "tailwindcss-language-server"))
+              (should (equal .tsgo "typescript-language-server"))
               (should (equal .vscode-css-language-server
                              "vscode-css-language-server"))
               (should (equal .vue-language-server "vue-language-server"))
@@ -1511,6 +1584,10 @@ the JS project boundary."
   (should (eglot-typescript-preset--rass-tools-safe-p
            '(vscode-css-language-server tailwindcss-language-server)))
   (should (eglot-typescript-preset--rass-tools-safe-p
+           '(tsgo eslint)))
+  (should (safe-local-variable-p
+           'eglot-typescript-preset-rass-tools '(tsgo)))
+  (should (eglot-typescript-preset--rass-tools-safe-p
            '(vue-language-server tailwindcss-language-server)))
   (should (eglot-typescript-preset--rass-tools-safe-p
            '(svelte-language-server tailwindcss-language-server)))
@@ -1624,8 +1701,8 @@ actual source."
   "Copy FIXTURE-SUBDIR contents into TMP-DIR.
 When NEED-NODE-MODULES is non-nil, symlink node_modules."
   (let ((src-dir (expand-file-name fixture-subdir my-test-fixtures-dir)))
-    (dolist (file (directory-files src-dir nil "\\`[^.]"))
-      (unless (string= file "node_modules")
+    (dolist (file (directory-files src-dir nil))
+      (unless (member file '("." ".." "node_modules"))
         (let ((src (expand-file-name file src-dir))
               (dst (expand-file-name file tmp-dir)))
           (if (file-directory-p src)
@@ -1667,6 +1744,40 @@ When NEED-NODE-MODULES is non-nil, symlink node_modules."
 	     result type-err
 	     '("2322" "@typescript-eslint/no-unused-vars")
 	     '("typescript" "eslint"))))))))
+
+;; --- tsgo ---
+
+(ert-deftest ts-preset--live-tsgo ()
+  "Live: .dir-locals selects tsgo and initializes through rass."
+  (skip-unless (my-test-live-tests-enabled-p))
+  (skip-unless (my-test--live-local-bins-available-p))
+  (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+    (skip-unless (executable-find "rass"))
+    (skip-unless (executable-find "tsgo"))
+    (my-test-with-tmp-dir tmp-dir
+      (my-test-with-project-env tmp-dir
+        (my-test--setup-fixture-dir "tsgo" tmp-dir t)
+        (let* ((valid (expand-file-name "valid.ts" tmp-dir))
+               (type-err (expand-file-name "type-error.ts" tmp-dir))
+               (buffer (find-file-noselect valid)))
+          (unwind-protect
+              (with-current-buffer buffer
+                (let ((enable-local-variables t))
+                  (hack-local-variables))
+                (should (eq eglot-typescript-preset-lsp-server 'rass))
+                (should (equal eglot-typescript-preset-rass-tools '(tsgo)))
+                (let* ((path (eglot-typescript-preset--rass-preset-path
+                              eglot-typescript-preset-rass-tools nil))
+                       (result (my-test--run-rass-session
+                                path
+                                `((,valid . "typescript")
+                                  (,type-err . "typescript"))
+                                tmp-dir 8 0 "--settle 1")))
+                  (should (alist-get 'initialized result))
+                  (my-test--assert-file-diagnostics result valid '())
+                  (my-test--assert-file-diagnostics
+                   result type-err '("2322") '("ts"))))
+            (kill-buffer buffer)))))))
 
 ;; --- TypeScript + biome ---
 

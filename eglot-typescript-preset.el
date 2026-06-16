@@ -33,7 +33,7 @@
 
 ;; Prerequisites:
 ;;
-;; - Install typescript-language-server or deno (for TS/JS files)
+;; - Install typescript-language-server, deno, or tsgo (for TS/JS files)
 ;; - Install @astrojs/language-server (for Astro files, optional)
 ;; - Install @vue/language-server (for Vue files, optional)
 ;; - Install svelte-language-server (for Svelte files, optional)
@@ -227,6 +227,7 @@ older ones are deleted.  Shared presets are not affected."
      (const :tag "oxlint" oxlint)
      (const :tag "svelte-language-server" svelte-language-server)
      (const :tag "tailwindcss-language-server" tailwindcss-language-server)
+     (const :tag "tsgo" tsgo)
      (const :tag "typescript-language-server" typescript-language-server)
      (const :tag "vscode-css-language-server" vscode-css-language-server)
      (const :tag "vue-language-server" vue-language-server)
@@ -242,8 +243,8 @@ older ones are deleted.  Shared presets are not affected."
   "Tools included in the generated `rass` preset for TS/JS files.
 
 Each entry may be a supported symbol like `typescript-language-server',
-`eslint', `biome', `oxlint', or `oxfmt', or a literal command vector
-of strings."
+`tsgo', `eslint', `biome', `oxlint', or `oxfmt', or a literal
+command vector of strings."
   :type eglot-typescript-preset--rass-tools-type
   :group 'eglot-typescript-preset)
 
@@ -354,6 +355,10 @@ languageId to language servers."
   "Return non-nil if VALUE is a safe `eglot-typescript-preset-lsp-server' value."
   (memq value '(typescript-language-server deno rass)))
 
+;;;###autoload
+(put 'eglot-typescript-preset-lsp-server 'safe-local-variable
+     (lambda (value) (memq value '(typescript-language-server deno rass))))
+
 (put 'eglot-typescript-preset-lsp-server 'safe-local-variable
      #'eglot-typescript-preset--lsp-server-safe-p)
 
@@ -394,10 +399,26 @@ are excluded because they could execute arbitrary programs."
                       (memq item '( astro-ls biome eslint oxfmt oxlint
                                     svelte-language-server
                                     tailwindcss-language-server
+                                    tsgo
                                     typescript-language-server
                                     vscode-css-language-server
                                     vue-language-server)))
                     value)))
+
+;;;###autoload
+(put 'eglot-typescript-preset-rass-tools 'safe-local-variable
+     (lambda (value)
+       (and (listp value)
+            (catch 'unsafe
+              (dolist (item value t)
+                (unless (memq item '( astro-ls biome eslint oxfmt oxlint
+                                      svelte-language-server
+                                      tailwindcss-language-server
+                                      tsgo
+                                      typescript-language-server
+                                      vscode-css-language-server
+                                      vue-language-server))
+                  (throw 'unsafe nil)))))))
 
 (put 'eglot-typescript-preset-rass-tools 'safe-local-variable
      #'eglot-typescript-preset--rass-tools-safe-p)
@@ -455,11 +476,16 @@ As a last resort, try to find it via `npm root -g'."
         tsdk)))
 
 (defun eglot-typescript-preset--node-modules-bin-dir ()
-  "Return the project-local `node_modules/.bin' directory if it exists."
-  (when-let* ((root (eglot-typescript-preset--project-root))
-              (bin-dir (expand-file-name "node_modules/.bin" root))
-              ((file-directory-p bin-dir)))
-    bin-dir))
+  "Return the nearest ancestor `node_modules/.bin' directory if it exists."
+  (when-let* ((start (or (eglot-typescript-preset--project-root)
+                         (when-let* ((file (buffer-file-name)))
+                           (file-name-directory file))))
+              (root (locate-dominating-file
+                     start
+                     (lambda (dir)
+                       (file-directory-p
+                        (expand-file-name "node_modules/.bin" dir))))))
+    (expand-file-name "node_modules/.bin" root)))
 
 (defun eglot-typescript-preset--resolve-executable (name)
   "Resolve executable NAME, preferring the current project's `node_modules'."
@@ -487,7 +513,7 @@ As a last resort, try to find it via `npm root -g'."
         'svelte-language-server)
        ((string= base "tailwindcss-language-server")
         'tailwindcss-language-server)
-       ((member base '("typescript-language-server" "tsserver"))
+       ((member base '("tsgo" "typescript-language-server" "tsserver"))
         'typescript-language-server)
        ((member base '("vscode-css-language-server" "css-language-server"
                        "css-languageserver"))
@@ -520,6 +546,10 @@ As a last resort, try to find it via `npm root -g'."
    ((eq tool 'tailwindcss-language-server)
     (list (eglot-typescript-preset--resolve-executable
            "tailwindcss-language-server")
+          "--stdio"))
+   ((eq tool 'tsgo)
+    (list (eglot-typescript-preset--resolve-executable "tsgo")
+          "--lsp"
           "--stdio"))
    ((eq tool 'typescript-language-server)
     (list (eglot-typescript-preset--resolve-executable

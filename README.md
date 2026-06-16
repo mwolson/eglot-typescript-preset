@@ -62,6 +62,8 @@ for Python support.
   - [deno](https://deno.land/) -- Deno's built-in LSP (`deno lsp`)
   - [rassumfrassum](https://github.com/joaotavora/rassumfrassum) (>= v0.3.3) --
     optional stdio multiplexer for combining multiple tools
+  - [@typescript/native-preview](https://www.npmjs.com/package/@typescript/native-preview)
+    for TypeScript's native preview LSP (`tsgo --lsp --stdio`)
 - Optional linters and formatters (used with `rass` backend):
   - [biome](https://biomejs.dev/) -- linter and formatter
   - [eslint](https://eslint.org/) and its VSCode language server from
@@ -459,6 +461,7 @@ Available symbolic tools:
 - `oxlint`
 - `svelte-language-server`
 - `tailwindcss-language-server`
+- `tsgo`
 - `typescript-language-server`
 - `vscode-css-language-server`
 - `vue-language-server`
@@ -690,7 +693,7 @@ prompting:
   `eglot-typescript-preset-vue-rass-tools`, and
   `eglot-typescript-preset-svelte-rass-tools` accept lists of known tool symbols
   (`astro-ls`, `biome`, `eslint`, `oxfmt`, `oxlint`, `svelte-language-server`,
-  `tailwindcss-language-server`, `typescript-language-server`,
+  `tailwindcss-language-server`, `tsgo`, `typescript-language-server`,
   `vscode-css-language-server`, `vue-language-server`).
 - `eglot-typescript-preset-js-project-markers` accepts lists of filename
   strings.

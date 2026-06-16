@@ -234,6 +234,17 @@ def main():
                 )
                 continue
 
+            if method == "client/registerCapability":
+                send(
+                    proc,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": message["id"],
+                        "result": None,
+                    },
+                )
+                continue
+
             if method in (
                 "textDocument/publishDiagnostics",
                 "$/streamDiagnostics",
