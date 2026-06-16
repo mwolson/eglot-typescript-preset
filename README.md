@@ -85,6 +85,8 @@ for Python support.
 - Optional for Vue:
   - [@vue/language-server](https://www.npmjs.com/@vue/language-server) (provides
     the `vue-language-server` command)
+  - [@vue/typescript-plugin](https://www.npmjs.com/package/@vue/typescript-plugin)
+    for TypeScript completions and type checking inside `.vue` files
 
 ## Installation
 
