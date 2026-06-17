@@ -1,6 +1,6 @@
 {
   "name": "eglot-typescript-preset",
-  "version": "0.6.0",
+  "version": "1.0.0",
   "description": "TypeScript LSP preset for Emacs using Eglot",
   "type": "module",
   "keywords": [],
