@@ -91,7 +91,7 @@ def _eslint_config(workspace_folder: dict | None = None) -> dict:
 class GeneratedTypeScriptLogic(LspLogic):
     def process_request(
         self, method: str, params: JSON, server: Server
-    ) -> None:
+    ) -> JSON | None:
         if method == "initialize":
             if INIT_OPTIONS and server == self.primary:
                 params["initializationOptions"] = dmerge(
@@ -115,7 +115,7 @@ class GeneratedTypeScriptLogic(LspLogic):
                 params["initializationOptions"] = dmerge(
                     init_opts, {"plugins": plugins}
                 )
-        super().process_request(method, params, server)
+        return super().process_request(method, params, server)
 
     # Servers that percent-encode characters the client sends literally.
     # svelteserver encodes ``+`` as ``%2B`` via vscode-uri; other servers
