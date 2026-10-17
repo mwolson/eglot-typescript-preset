@@ -901,14 +901,12 @@ the JS project boundary."
           (let-alist result
             (should (equal .eslintLogic :false))
             (should (equal .initOptions :null))
-            (should (equal .initOptionsScoping :null))
+            (should (equal .initializeOptionsByServer [nil nil]))
             (should (equal .unsupportedRegistrationResponse :null))
             (should .hasLogicClass)
-            (should (eq .processRequestReturnsParams t))
+            (should (equal .diffChangesFailures []))
+            (should (eq .diffChangesInstalled t))
             (let-alist .neighbourPulls
-              (should (equal .requested ["file:///x.ts" "file:///y.ts"]))
-              (should (equal .notified ["file:///x.ts"])))
-            (let-alist .neighbourPullsLegacyAttr
               (should (equal .requested ["file:///x.ts" "file:///y.ts"]))
               (should (equal .notified ["file:///x.ts"])))
             (let-alist .neighbourPullsSingleFile
@@ -955,7 +953,12 @@ the JS project boundary."
                                 (shell-quote-argument path))))
                (result (json-parse-string output :object-type 'alist)))
           (let-alist result
-            (should (not (equal .eslintLogic :false)))))))))
+            (should (not (equal .eslintLogic :false)))
+            (let-alist .eslintConfig
+              (should (eq .codeAction.disableRuleComment.enable t))
+              (should (equal .codeAction.disableRuleComment.location
+                             "separateLine"))
+              (should (eq .codeAction.showDocumentation.enable t)))))))))
 
 (ert-deftest ts-preset--template-unit-astro ()
   "Validate template with Astro init options."
@@ -974,9 +977,12 @@ the JS project boundary."
           (let-alist result
             (should (not (equal .initOptions :null)))
             (should (not (equal .eslintLogic :false)))
-            (let-alist .initOptionsScoping
-              (should (not (equal .primaryGotOptions :false)))
-              (should (equal .secondaryGotOptions :false)))))))))
+            (let ((by-server .initializeOptionsByServer))
+              (should (= (length by-server) 2))
+              (should (eq (alist-get 'contentIntellisense (aref by-server 0)) t))
+              (should (equal (alist-get 'tsdk (alist-get 'typescript (aref by-server 0)))
+                             "/fake/lib"))
+              (should-not (aref by-server 1)))))))))
 
 (ert-deftest ts-preset--template-unit-vue ()
   "Validate template with Vue init options."
@@ -995,9 +1001,40 @@ the JS project boundary."
           (let-alist result
             (should (not (equal .initOptions :null)))
             (should (equal .eslintLogic :false))
-            (let-alist .initOptionsScoping
-              (should (not (equal .primaryGotOptions :false)))
-              (should (equal .secondaryGotOptions :false)))))))))
+            (let ((by-server .initializeOptionsByServer))
+              (should (= (length by-server) 2))
+              (should (eq (alist-get 'hybridMode (alist-get 'vue (aref by-server 0))) t))
+              (should-not (aref by-server 1)))))))))
+
+(ert-deftest ts-preset--template-unit-vue-hybrid ()
+  "Scope Vue init options and the TypeScript plugin to their servers."
+  (skip-unless (executable-find "python3"))
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (cl-letf (((symbol-function 'eglot-typescript-preset--find-vue-ts-plugin)
+                 (lambda () "/fake/@vue/typescript-plugin")))
+        (let* ((eglot-typescript-preset-tsdk "/fake/lib")
+               (tools '(vue-language-server typescript-language-server
+                                            tailwindcss-language-server))
+               (path (eglot-typescript-preset--rass-preset-path tools nil)))
+          (should path)
+          (let* ((output (shell-command-to-string
+                          (format "python3 %s %s"
+                                  (shell-quote-argument my-test-rass-template-unit)
+                                  (shell-quote-argument path))))
+                 (result (json-parse-string output :object-type 'alist)))
+            (let-alist result
+              (let ((by-server .initializeOptionsByServer))
+                (should (= (length by-server) 3))
+                (should (eq (alist-get 'hybridMode (alist-get 'vue (aref by-server 0)))
+                            t))
+                (should-not (assoc 'plugins (aref by-server 0)))
+                (should (equal (alist-get 'plugins (aref by-server 1))
+                               [((name . "@vue/typescript-plugin")
+                                 (location . "/fake/@vue/typescript-plugin")
+                                 (languages . ["vue"]))]))
+                (should-not (assoc 'vue (aref by-server 1)))
+                (should-not (aref by-server 2))))))))))
 
 (ert-deftest ts-preset--template-unit-ts-eslint-oxlint ()
   "Validate template with typescript-language-server + eslint + oxlint."
@@ -1757,6 +1794,68 @@ When NEED-NODE-MODULES is non-nil, symlink node_modules."
 
 ;; --- tsgo ---
 
+;; Run the eslint fixture with EXTRA-ARGS and return the session result.
+(defun my-test--live-eslint-session (file extra-args)
+  "Run typescript-language-server + eslint on FILE with EXTRA-ARGS.
+FILE is relative to the eslint fixture.  Return the parsed session
+result and the absolute file path as a cons."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let* ((eglot-typescript-preset-rass-tools
+              '(typescript-language-server eslint))
+             (path (eglot-typescript-preset--rass-preset-path
+                    eglot-typescript-preset-rass-tools nil)))
+        (my-test--setup-fixture-dir "eslint" tmp-dir t)
+        (let ((abs (expand-file-name file tmp-dir)))
+          (cons (my-test--run-rass-session
+                 path `((,abs . "typescript")) tmp-dir nil nil extra-args)
+                abs))))))
+
+(ert-deftest ts-preset--live-ts-eslint-code-actions ()
+  "Live: ESLint quick fixes reach the client and run through rass."
+  (skip-unless (my-test-live-tests-enabled-p))
+  (skip-unless (my-test--live-local-bins-available-p))
+  (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+    (skip-unless (executable-find "rass"))
+    (skip-unless (executable-find "typescript-language-server"))
+    (skip-unless (executable-find "vscode-eslint-language-server"))
+    (pcase-let* ((`(,result . ,file)
+                  (my-test--live-eslint-session "debugger.ts" "--code-actions"))
+                 (actions (append (alist-get 'codeActions
+                                             (my-test--session-file-result
+                                              result file))
+                                  nil)))
+      (my-test--assert-file-diagnostics
+       result file '("no-debugger") '("eslint"))
+      (should (cl-some (lambda (action)
+                         (and (equal (alist-get 'title action)
+                                     "Disable no-debugger for this line")
+                              (equal (alist-get 'command action)
+                                     "eslint.applyDisableLine")))
+                       actions)))))
+
+(ert-deftest ts-preset--live-ts-eslint-execute-command ()
+  "Live: a command advertised by ESLint is routed to ESLint by rass."
+  (skip-unless (my-test-live-tests-enabled-p))
+  (skip-unless (my-test--live-local-bins-available-p))
+  (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+    (skip-unless (executable-find "rass"))
+    (skip-unless (executable-find "typescript-language-server"))
+    (skip-unless (executable-find "vscode-eslint-language-server"))
+    (pcase-let* ((`(,result . ,file)
+                  (my-test--live-eslint-session
+                   "fixable.ts"
+                   (concat "--request workspace/executeCommand "
+                           (shell-quote-argument
+                            (concat "{\"command\": \"eslint.applyAllFixes\", "
+                                    "\"arguments\": [{\"uri\": \"$URI\", "
+                                    "\"version\": 1}]}"))))))
+      (my-test--assert-file-diagnostics
+       result file '("@typescript-eslint/prefer-as-const") '("eslint"))
+      (let ((response (aref (alist-get 'requests result) 0)))
+        (should (equal (alist-get 'error response) :null)))
+      (should (>= (alist-get 'applyEditCount result) 1)))))
+
 (ert-deftest ts-preset--live-tsgo ()
   "Live: .dir-locals selects tsgo and initializes through rass."
   (skip-unless (my-test-live-tests-enabled-p))
@@ -1850,6 +1949,83 @@ When NEED-NODE-MODULES is non-nil, symlink node_modules."
 	    (my-test--assert-file-diagnostics
 	     result type-err
 	     '("2322" "eslint(no-unused-vars)") '("oxc" "typescript"))))))))
+
+;; rass 0.3.5 forwards ranged edits to incremental servers and rebuilds
+;; the full text for full-sync servers such as oxlint.  Send an
+;; Eglot-style batch of UTF-16 ranged changes and check both servers see
+;; the edited text.
+(ert-deftest ts-preset--live-ts-oxlint-mixed-sync-edit ()
+  "Live: ranged edits reach incremental and full-sync servers intact."
+  (skip-unless (my-test-live-tests-enabled-p))
+  (skip-unless (my-test--live-local-bins-available-p))
+  (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+    (skip-unless (executable-find "rass"))
+    (skip-unless (executable-find "typescript-language-server"))
+    (skip-unless (executable-find "oxlint"))
+    (my-test-with-tmp-dir tmp-dir
+      (my-test-with-project-env tmp-dir
+        (let* ((eglot-typescript-preset-rass-tools
+                '(typescript-language-server oxlint))
+               (path (eglot-typescript-preset--rass-preset-path
+                      eglot-typescript-preset-rass-tools nil))
+               ;; Insert after the surrogate pair, retype the value, and
+               ;; append a debugger statement, all in one notification.
+               (changes
+                (json-serialize
+                 [(:range (:start (:line 0 :character 5)
+                           :end (:line 0 :character 5))
+                   :text "!")
+                  (:range (:start (:line 1 :character 25)
+                           :end (:line 1 :character 26))
+                   :text "\"bad\"")
+                  (:range (:start (:line 2 :character 0)
+                           :end (:line 2 :character 0))
+                   :text "debugger;\n")])))
+          (my-test--setup-fixture-dir "text-sync" tmp-dir)
+          (let* ((edit (expand-file-name "edit.ts" tmp-dir))
+                 (result (my-test--run-rass-session
+                          path `((,edit . "typescript")) tmp-dir 30 2
+                          (concat "--settle 3 --did-change "
+                                  (shell-quote-argument changes))))
+                 (positions (append (alist-get 'diagnosticPositions
+                                               (my-test--session-file-result
+                                                result edit))
+                                    nil)))
+            (my-test--assert-file-diagnostics
+             result edit '("2322" "eslint(no-debugger)") '("oxc" "typescript"))
+            (should (member ["2322" 1 13] positions))
+            (should (member ["eslint(no-debugger)" 2 0] positions))))))))
+
+;; When Eglot loses track of edits it resends the whole buffer, and rass
+;; diffs it into ranged changes for incremental servers.  A form feed
+;; before the edit must not shift it to another line.
+(ert-deftest ts-preset--live-ts-full-text-change-after-form-feed ()
+  "Live: a full-text change after a form feed lands on the right line."
+  (skip-unless (my-test-live-tests-enabled-p))
+  (skip-unless (my-test--live-local-bins-available-p))
+  (let ((exec-path (cons my-test-local-bin-dir exec-path)))
+    (skip-unless (executable-find "rass"))
+    (skip-unless (executable-find "typescript-language-server"))
+    (my-test-with-tmp-dir tmp-dir
+      (my-test-with-project-env tmp-dir
+        (let* ((eglot-typescript-preset-rass-tools '(typescript-language-server))
+               (path (eglot-typescript-preset--rass-preset-path
+                      eglot-typescript-preset-rass-tools nil))
+               (changes
+                (json-serialize
+                 [(:text "// page one\n\f\nexport const x: number = \"bad\";\n")])))
+          (my-test--setup-fixture-dir "text-sync" tmp-dir)
+          (let* ((file (expand-file-name "formfeed.ts" tmp-dir))
+                 (result (my-test--run-rass-session
+                          path `((,file . "typescript")) tmp-dir 30 2
+                          (concat "--settle 3 --did-change "
+                                  (shell-quote-argument changes))))
+                 (positions (append (alist-get 'diagnosticPositions
+                                               (my-test--session-file-result
+                                                result file))
+                                    nil)))
+            (my-test--assert-file-diagnostics result file '("2322") '("typescript"))
+            (should (equal (seq-uniq positions) '(["2322" 2 13])))))))))
 
 ;; --- TypeScript + eslint + oxlint ---
 
@@ -1990,7 +2166,19 @@ When NEED-NODE-MODULES is non-nil, symlink node_modules."
 			  `((,valid . "vue")
 			    (,type-err . "vue")
 			    (,tmpl-err . "vue"))
-			  tmp-dir 30)))
+			  tmp-dir 30 nil
+			  (concat "--request textDocument/documentSymbol "
+				  (shell-quote-argument
+				   "{\"textDocument\": {\"uri\": \"$URI\"}}"))))
+		 (symbols (append (alist-get
+				   'result
+				   (aref (alist-get 'requests result) 0))
+				  nil))
+		 (names (mapcar (lambda (sym) (alist-get 'name sym)) symbols)))
+	    ;; rass routes documentSymbol to one server, so the Vue and
+	    ;; TypeScript servers do not both report the same symbols.
+	    (should names)
+	    (should (equal names (seq-uniq names)))
 	    (my-test--assert-file-diagnostics result valid '())
 	    (my-test--assert-file-diagnostics
 	     result type-err '("2322" "6133") '("typescript"))

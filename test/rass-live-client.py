@@ -104,6 +104,29 @@ def main():
     )
     parser.add_argument("--stderr", action="store_true")
     parser.add_argument(
+        "--code-actions",
+        action="store_true",
+        dest="code_actions",
+        help="after diagnostics settle, request code actions for each one",
+    )
+    parser.add_argument(
+        "--did-change",
+        dest="did_change",
+        default=None,
+        metavar="CHANGES_JSON",
+        help="right after didOpen, send these contentChanges for the first "
+        "file as version 2",
+    )
+    parser.add_argument(
+        "--request",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("METHOD", "PARAMS_JSON"),
+        help="send a request after diagnostics settle; $URI in PARAMS_JSON "
+        "expands to the first file's URI",
+    )
+    parser.add_argument(
         "--raw-uri",
         action="store_true",
         dest="raw_uri",
@@ -125,16 +148,56 @@ def main():
     next_id = 1
     workspace_sections = []
     per_file = {}
+    file_diagnostics = {}
+    apply_edits = []
+    request_results = []
     files_with_diags = set()
     diag_event_count = {}
     all_file_uris = set()
     for file_path, _ in files:
         uri = to_uri(file_path)
-        per_file[uri] = {"diagnosticSources": [], "diagnosticCodes": []}
+        per_file[uri] = {
+            "diagnosticSources": [],
+            "diagnosticCodes": [],
+            "diagnosticPositions": [],
+        }
+        file_diagnostics[uri] = {}
         diag_event_count[uri] = 0
         all_file_uris.add(uri)
     initialized = False
     message_queue, reader_thread = start_message_reader(proc)
+
+    def answer_server_request(message):
+        """Reply to a server-to-client request; return True if handled."""
+        method = message.get("method")
+        if method is None or "id" not in message:
+            return False
+        params = message.get("params", {})
+        if method == "workspace/configuration":
+            for item in params.get("items", []):
+                workspace_sections.append(item.get("section", ""))
+            result = [None for _ in params.get("items", [])]
+        elif method == "workspace/applyEdit":
+            apply_edits.append(params.get("edit", {}))
+            result = {"applied": True}
+        else:
+            result = None
+        send(proc, {"jsonrpc": "2.0", "id": message["id"], "result": result})
+        return True
+
+    def await_response(request_id, timeout):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            message = wait_for_message(
+                message_queue, max(0.0, deadline - time.monotonic())
+            )
+            if message is None:
+                continue
+            if answer_server_request(message):
+                continue
+            if message.get("id") == request_id and "method" not in message:
+                return message
+        return None
 
     try:
         next_id = request(
@@ -145,8 +208,22 @@ def main():
                 "processId": None,
                 "rootUri": to_uri(root_path),
                 "capabilities": {
-                    "workspace": {"configuration": True},
+                    "workspace": {
+                        "applyEdit": True,
+                        "configuration": True,
+                        "executeCommand": {},
+                    },
                     "textDocument": {
+                        "codeAction": {
+                            "codeActionLiteralSupport": {
+                                "codeActionKind": {
+                                    "valueSet": ["quickfix", "refactor", "source"]
+                                }
+                            }
+                        },
+                        "documentSymbol": {
+                            "hierarchicalDocumentSymbolSupport": True
+                        },
                         "publishDiagnostics": {},
                         "$streamingDiagnostics": True,
                     },
@@ -216,33 +293,25 @@ def main():
                             },
                         },
                     )
+                if args.did_change:
+                    send(
+                        proc,
+                        {
+                            "jsonrpc": "2.0",
+                            "method": "textDocument/didChange",
+                            "params": {
+                                "textDocument": {
+                                    "uri": to_uri(files[0][0]),
+                                    "version": 2,
+                                },
+                                "contentChanges": json.loads(args.did_change),
+                            },
+                        },
+                    )
                 files_opened = True
                 continue
 
-            if method == "workspace/configuration":
-                for item in message.get("params", {}).get("items", []):
-                    workspace_sections.append(item.get("section", ""))
-                send(
-                    proc,
-                    {
-                        "jsonrpc": "2.0",
-                        "id": message["id"],
-                        "result": [
-                            None for _ in message.get("params", {}).get("items", [])
-                        ],
-                    },
-                )
-                continue
-
-            if method == "client/registerCapability":
-                send(
-                    proc,
-                    {
-                        "jsonrpc": "2.0",
-                        "id": message["id"],
-                        "result": None,
-                    },
-                )
+            if answer_server_request(message):
                 continue
 
             if method in (
@@ -259,14 +328,64 @@ def main():
                     for diagnostic in message.get("params", {}).get(
                         "diagnostics", []
                     ):
+                        file_diagnostics[diag_uri][
+                            json.dumps(diagnostic, sort_keys=True)
+                        ] = diagnostic
                         source = diagnostic.get("source")
                         code = diagnostic.get("code")
                         if source is not None:
                             entry["diagnosticSources"].append(str(source))
                         if code is not None:
                             entry["diagnosticCodes"].append(str(code))
+                            start = diagnostic.get("range", {}).get("start", {})
+                            entry["diagnosticPositions"].append(
+                                [str(code), start.get("line"), start.get("character")]
+                            )
                     stable_since = time.monotonic()
                 continue
+
+        if initialized and args.code_actions:
+            for uri, diagnostics in file_diagnostics.items():
+                actions = []
+                for diagnostic in diagnostics.values():
+                    request_id = next_id
+                    next_id = request(
+                        proc,
+                        next_id,
+                        "textDocument/codeAction",
+                        {
+                            "textDocument": {"uri": uri},
+                            "range": diagnostic["range"],
+                            "context": {"diagnostics": [diagnostic]},
+                        },
+                    )
+                    response = await_response(request_id, args.timeout)
+                    for action in (response or {}).get("result") or []:
+                        command = action.get("command")
+                        if isinstance(command, dict):
+                            command = command.get("command")
+                        actions.append(
+                            {"title": action.get("title"), "command": command}
+                        )
+                per_file[uri]["codeActions"] = actions
+
+        first_uri = to_uri(files[0][0])
+        for method, params_json in args.request if initialized else []:
+            request_id = next_id
+            next_id = request(
+                proc,
+                next_id,
+                method,
+                json.loads(params_json.replace("$URI", first_uri)),
+            )
+            response = await_response(request_id, args.timeout) or {}
+            request_results.append(
+                {
+                    "method": method,
+                    "error": response.get("error"),
+                    "result": response.get("result"),
+                }
+            )
 
         try:
             next_id = request(proc, next_id, "shutdown", None)
@@ -297,6 +416,8 @@ def main():
         "initialized": initialized,
         "workspaceConfigSections": workspace_sections,
         "files": {uri: data for uri, data in per_file.items()},
+        "requests": request_results,
+        "applyEditCount": len(apply_edits),
     }
 
     if args.stderr:

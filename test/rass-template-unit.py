@@ -3,6 +3,8 @@
 import asyncio
 import importlib.util
 import json
+import os
+import re
 import sys
 import types
 from pathlib import Path
@@ -17,7 +19,20 @@ def ensure_rassumfrassum_stubs():
     class LspLogic:
         primary = None
 
+        async def on_client_request(self, method, params, servers):
+            return servers
+
         def process_request(self, method, params, server):
+            # Mirrors rass 0.3.4+ handling of the "rass" key.
+            init_opts = params.get("initializationOptions")
+            if method == "initialize" and init_opts and "rass" in init_opts:
+                generic = {k: v for k, v in init_opts.items() if k != "rass"}
+                new_opts = generic
+                for pattern, overlay in init_opts["rass"].items():
+                    if re.search(pattern, server.name):
+                        new_opts = dmerge(overlay, generic)
+                        break
+                params = {**params, "initializationOptions": new_opts}
             return params
 
         async def on_server_request(self, method, params, source):
@@ -41,6 +56,10 @@ def ensure_rassumfrassum_stubs():
         return result
 
     frassum.DirectResponse = DirectResponse
+    def _diff_changes(old, new):
+        raise AssertionError("preset should replace rass _diff_changes")
+
+    frassum._diff_changes = _diff_changes
     frassum.LspLogic = LspLogic
     frassum.Server = Server
     json_mod.JSON = dict
@@ -50,6 +69,50 @@ def ensure_rassumfrassum_stubs():
     sys.modules["rassumfrassum.frassum"] = frassum
     sys.modules["rassumfrassum.json"] = json_mod
     sys.modules["rassumfrassum.util"] = util
+
+
+DIFF_CASES = [
+    ("one\x0c\ntwo\nthree\n", "one\x0c\ntwo\nTHREE\n"),
+    ("one\rtwo\nthree\n", "one\rtwo\nTHREE\n"),
+    ("one\u2028two\nthree\n", "one\u2028two\nTHREE\n"),
+    ("one\x85two\nthree\n", "one\x85two\nTHREE\n"),
+    ("a\r\nb\r\n", "a\r\nB\r\n"),
+    ("// \U0001F600 x\n", "// \U0001F600! x\n"),
+    ("aa", "aaa"),
+    ("abc", ""),
+    ("", "abc"),
+    ("same\n", "same\n"),
+]
+
+
+def apply_changes(text, changes):
+    """Apply LSP contentChanges using newline-only lines and UTF-16 columns."""
+
+    def offset(pos):
+        lines = text.split("\n")
+        index = sum(len(line) + 1 for line in lines[: pos["line"]])
+        units = 0
+        for char in lines[pos["line"]] if pos["line"] < len(lines) else "":
+            if units >= pos["character"]:
+                break
+            units += 2 if ord(char) > 0xFFFF else 1
+            index += 1
+        return index
+
+    for change in changes:
+        start = offset(change["range"]["start"])
+        end = offset(change["range"]["end"])
+        text = text[:start] + change["text"] + text[end:]
+    return text
+
+
+def diff_changes_failures(module):
+    """Return the DIFF_CASES that _diff_changes does not reproduce."""
+    return [
+        [old, new]
+        for old, new in DIFF_CASES
+        if apply_changes(old, module._diff_changes(old, new)) != new
+    ]
 
 
 def load_module(path_str):
@@ -101,7 +164,7 @@ async def diagnostic_pull_request(module):
     }
 
 
-async def neighbour_diagnostic_pulls(module, inter_file, legacy_attr):
+async def neighbour_diagnostic_pulls(module, inter_file):
     logic_cls = module.logic_class()
     server = sys.modules["rassumfrassum.frassum"].Server()
     server.name = "tsgo"
@@ -122,11 +185,7 @@ async def neighbour_diagnostic_pulls(module, inter_file, legacy_attr):
     logic.servers = {id(server): server}
     logic.request_server = request_server
     logic.notify_client = notify_client
-    documents = {"file:///x.ts": origin, "file:///y.ts": neighbour}
-    if legacy_attr:
-        logic.document_state = documents
-    else:
-        logic.documents = documents
+    logic.documents = {"file:///x.ts": origin, "file:///y.ts": neighbour}
     logic._stash_diagnostics_data = lambda _diags, _server, _state: None
 
     await logic._pull_and_stream_diags("file:///x.ts", origin, True)
@@ -139,14 +198,23 @@ async def neighbour_diagnostic_pulls(module, inter_file, legacy_attr):
     }
 
 
-def process_request_returns_params(module):
-    logic_cls = module.logic_class()
-    server = sys.modules["rassumfrassum.frassum"].Server()
-    server.name = "primary"
-    logic = logic_cls.__new__(logic_cls)
-    logic.primary = server
-    params = {"textDocument": {"uri": "file:///x.ts"}}
-    return logic.process_request("textDocument/hover", params, server) is params
+async def initialize_options_by_server(module):
+    """Return the initializationOptions each server receives."""
+    servers = []
+    for index, command in enumerate(module.SERVERS):
+        server = sys.modules["rassumfrassum.frassum"].Server()
+        base = os.path.basename(command[0])
+        server.name = f"{base}#{index}" if index else base
+        servers.append(server)
+    logic = module.logic_class().__new__(module.logic_class())
+    params = {"initializationOptions": {}}
+    await logic.on_client_request("initialize", params, servers)
+    return [
+        logic.process_request("initialize", params, server).get(
+            "initializationOptions"
+        )
+        for server in servers
+    ]
 
 
 async def unsupported_registration_response(module):
@@ -196,56 +264,31 @@ def main():
         "unknown": module._server_kind("custom-lsp"),
     }
 
-    init_options_scoping = None
-    if module.INIT_OPTIONS and hasattr(module, "logic_class"):
-        logic_cls = module.logic_class()
-        primary = sys.modules["rassumfrassum.frassum"].Server()
-        primary.name = "primary"
-        secondary = sys.modules["rassumfrassum.frassum"].Server()
-        secondary.name = "secondary"
-        logic = logic_cls.__new__(logic_cls)
-        logic.primary = primary
-
-        primary_params = logic.process_request(
-            "initialize", {"initializationOptions": {}}, primary
-        )
-        primary_got = (primary_params or {}).get("initializationOptions", {})
-
-        secondary_params = logic.process_request(
-            "initialize", {"initializationOptions": {}}, secondary
-        )
-        secondary_got = (secondary_params or {}).get(
-            "initializationOptions", {}
-        )
-
-        init_options_scoping = {
-            "primaryGotOptions": bool(primary_got),
-            "secondaryGotOptions": bool(secondary_got),
-        }
-
     print(
         json.dumps(
             {
                 "serverKind": server_kind,
+                "diffChangesFailures": diff_changes_failures(module),
+                "diffChangesInstalled": sys.modules[
+                    "rassumfrassum.frassum"
+                ]._diff_changes
+                is module._diff_changes,
                 "servers": module.servers(),
                 "hasLogicClass": hasattr(module, "logic_class"),
                 "eslintLogic": module.ESLINT_LOGIC,
                 "initOptions": module.INIT_OPTIONS,
-                "initOptionsScoping": init_options_scoping,
+                "eslintConfig": module._eslint_config(),
+                "initializeOptionsByServer": asyncio.run(
+                    initialize_options_by_server(module)
+                ),
                 "diagnosticPullRequest": asyncio.run(
                     diagnostic_pull_request(module)
                 ),
                 "neighbourPulls": asyncio.run(
-                    neighbour_diagnostic_pulls(module, True, False)
-                ),
-                "neighbourPullsLegacyAttr": asyncio.run(
-                    neighbour_diagnostic_pulls(module, True, True)
+                    neighbour_diagnostic_pulls(module, True)
                 ),
                 "neighbourPullsSingleFile": asyncio.run(
-                    neighbour_diagnostic_pulls(module, False, False)
-                ),
-                "processRequestReturnsParams": process_request_returns_params(
-                    module
+                    neighbour_diagnostic_pulls(module, False)
                 ),
                 "unsupportedRegistrationResponse": asyncio.run(
                     unsupported_registration_response(module)

@@ -2,6 +2,9 @@
 
 import asyncio
 import os
+import re
+import sys
+from importlib.metadata import version
 from typing import Any, cast
 from urllib.parse import unquote
 
@@ -13,6 +16,78 @@ SERVERS: list[list[str]] = __SERVERS__  # type: ignore[name-defined]
 INIT_OPTIONS: dict[str, Any] | None = __INIT_OPTIONS__  # type: ignore[name-defined]
 ESLINT_LOGIC: bool = __ESLINT_LOGIC__  # type: ignore[name-defined]
 VUE_TS_PLUGIN: str | None = __VUE_TS_PLUGIN__  # type: ignore[name-defined]
+
+
+MIN_RASS_VERSION = (0, 3, 5)
+
+
+def _warn_if_rass_too_old() -> None:
+    """Warn on stderr, which Eglot logs, when rass predates MIN_RASS_VERSION."""
+    try:
+        installed = version("rassumfrassum")
+        parts = tuple(int(part) for part in installed.split(".")[:3])
+    except Exception:
+        return
+    if parts < MIN_RASS_VERSION:
+        wanted = ".".join(str(part) for part in MIN_RASS_VERSION)
+        print(
+            f"eglot-typescript-preset: rassumfrassum {installed} is older than "
+            f"{wanted}, so per-server settings will not apply; "
+            "please upgrade it",
+            file=sys.stderr,
+        )
+
+
+def _utf16_len(text: str) -> int:
+    return len(text) + sum(1 for char in text if ord(char) > 0xFFFF)
+
+
+def _lsp_position_of(text: str, index: int) -> dict[str, int]:
+    line_start = text.rfind("\n", 0, index) + 1
+    return {
+        "line": text.count("\n", 0, index),
+        "character": _utf16_len(text[line_start:index]),
+    }
+
+
+def _diff_changes(old: str, new: str) -> list[dict[str, Any]]:
+    """Return one ranged contentChange that turns OLD into NEW.
+
+    Replaces rass 0.3.5's version, which splits lines with
+    ``str.splitlines`` (so form feeds and other separators shift the
+    edit to the wrong line) and diffs in roughly quadratic time.  Lines
+    here end only at newlines, as in Eglot and rass's _lsp_position.
+    """
+    if old == new:
+        return []
+    limit = min(len(old), len(new))
+    prefix = 0
+    while prefix < limit and old[prefix] == new[prefix]:
+        prefix += 1
+    suffix = 0
+    while suffix < limit - prefix and old[-1 - suffix] == new[-1 - suffix]:
+        suffix += 1
+    return [
+        {
+            "range": {
+                "start": _lsp_position_of(old, prefix),
+                "end": _lsp_position_of(old, len(old) - suffix),
+            },
+            "text": new[prefix : len(new) - suffix],
+        }
+    ]
+
+
+def _install_diff_changes_fix() -> None:
+    """Use _diff_changes when rass translates full-text changes."""
+    import rassumfrassum.frassum as frassum_module
+
+    if hasattr(frassum_module, "_diff_changes"):
+        frassum_module._diff_changes = _diff_changes
+
+
+_warn_if_rass_too_old()
+_install_diff_changes_fix()
 
 
 def _server_kind(name: str) -> str | None:
@@ -74,9 +149,54 @@ def _find_workspace_folder(scope_uri: str) -> dict | None:
     return None
 
 
+def _rass_server_pattern(index: int) -> str:
+    """Return a regex matching the name rass gives server INDEX at launch."""
+    base = os.path.basename(SERVERS[index][0])
+    name = f"{base}#{index}" if index else base
+    return f"^{re.escape(name)}$"
+
+
+def _initialize_overlays() -> dict[str, dict[str, Any]]:
+    """Return per-server initializationOptions keyed by rass name pattern."""
+    overlays: dict[str, dict[str, Any]] = {}
+    for index, command in enumerate(SERVERS):
+        overlay: dict[str, Any] = {}
+        if index == 0 and INIT_OPTIONS:
+            overlay = dict(INIT_OPTIONS)
+        if (
+            VUE_TS_PLUGIN
+            and _server_kind(os.path.basename(command[0]))
+            == "typescript-language-server"
+        ):
+            overlay = dmerge(
+                overlay,
+                {
+                    "plugins": [
+                        {
+                            "name": "@vue/typescript-plugin",
+                            "location": VUE_TS_PLUGIN,
+                            "languages": ["vue"],
+                        }
+                    ]
+                },
+            )
+        if overlay:
+            overlays[_rass_server_pattern(index)] = overlay
+    return overlays
+
+
 def _eslint_config(workspace_folder: dict | None = None) -> dict:
     """Return base ESLint configuration."""
     config: dict[str, Any] = {
+        # vscode-eslint fails every textDocument/codeAction request when
+        # this section is missing, which hides all ESLint quick fixes.
+        "codeAction": {
+            "disableRuleComment": {
+                "enable": True,
+                "location": "separateLine",
+            },
+            "showDocumentation": {"enable": True},
+        },
         "experimental": {},
         "problems": {},
         "rulesCustomizations": [],
@@ -89,33 +209,18 @@ def _eslint_config(workspace_folder: dict | None = None) -> dict:
 
 
 class GeneratedTypeScriptLogic(LspLogic):
-    def process_request(
-        self, method: str, params: JSON, server: Server
-    ) -> JSON | None:
-        if method == "initialize":
-            if INIT_OPTIONS and server == self.primary:
-                params["initializationOptions"] = dmerge(
-                    params.get("initializationOptions") or {},
-                    INIT_OPTIONS,
-                )
-            if (
-                VUE_TS_PLUGIN
-                and _server_kind(server.name)
-                == "typescript-language-server"
-            ):
-                init_opts = params.get("initializationOptions") or {}
-                plugins = list(init_opts.get("plugins", []))
-                plugins.append(
-                    {
-                        "name": "@vue/typescript-plugin",
-                        "location": VUE_TS_PLUGIN,
-                        "languages": ["vue"],
-                    }
-                )
-                params["initializationOptions"] = dmerge(
-                    init_opts, {"plugins": plugins}
-                )
-        return super().process_request(method, params, server)
+    async def on_client_request(
+        self, method: str, params: JSON, servers: list[Server]
+    ):
+        # rass applies the "rass" key per server and strips it before
+        # forwarding, so each overlay reaches only the server it names.
+        if method == "initialize" and (overlays := _initialize_overlays()):
+            init_opts = params.get("initializationOptions") or {}
+            params["initializationOptions"] = {
+                **init_opts,
+                "rass": {**overlays, **(init_opts.get("rass") or {})},
+            }
+        return await super().on_client_request(method, params, servers)
 
     # Servers that percent-encode characters the client sends literally.
     # svelteserver encodes ``+`` as ``%2B`` via vscode-uri; other servers
@@ -233,10 +338,6 @@ class GeneratedTypeScriptLogic(LspLogic):
                     params["diagnostics"] = diagnostics
                 await self.notify_client("$/streamDiagnostics", params)
 
-        # rass 0.3.5 renamed ``document_state`` to ``documents``.
-        documents = getattr(self, "documents", None)
-        if documents is None:
-            documents = self.document_state
         for server in self.servers.values():
             if not (provider := server.caps.get("diagnosticProvider")):
                 continue
@@ -247,7 +348,7 @@ class GeneratedTypeScriptLogic(LspLogic):
                 "interFileDependencies", True
             )
             if include_neighbours and inter_file:
-                for uri, doc_state in documents.items():
+                for uri, doc_state in self.documents.items():
                     if uri != orig_uri:
                         asyncio.create_task(doit(server, uri, doc_state))
 

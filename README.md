@@ -60,7 +60,7 @@ for Python support.
   - [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
     -- the standard TypeScript LSP
   - [deno](https://deno.land/) -- Deno's built-in LSP (`deno lsp`)
-  - [rassumfrassum](https://github.com/joaotavora/rassumfrassum) (>= v0.3.3) --
+  - [rassumfrassum](https://github.com/joaotavora/rassumfrassum) (>= v0.3.5) --
     optional stdio multiplexer for combining multiple tools
   - [@typescript/native-preview](https://www.npmjs.com/package/@typescript/native-preview)
     for TypeScript's native preview LSP (`tsgo --lsp --stdio`)
