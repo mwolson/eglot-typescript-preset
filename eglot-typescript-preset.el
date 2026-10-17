@@ -495,6 +495,41 @@ As a last resort, try to find it via `npm root -g'."
       (executable-find name)
       name))
 
+(defconst eglot-typescript-preset--min-rass-version "0.3.5"
+  "Oldest rassumfrassum version that generated `rass' presets support.")
+
+(defvar eglot-typescript-preset--checked-rass-programs
+  (make-hash-table :test 'equal)
+  "Rass programs whose version has already been checked this session.")
+
+(defun eglot-typescript-preset--rass-version (program)
+  "Return the version that rass PROGRAM reports, or nil if unknown."
+  (with-temp-buffer
+    (when (eq 0 (ignore-errors (call-process program nil t nil "--version")))
+      (goto-char (point-min))
+      (when (re-search-forward "\\brass \\([0-9]+\\(?:\\.[0-9]+\\)*\\)" nil t)
+        (match-string 1)))))
+
+(defun eglot-typescript-preset--check-rass-version (program)
+  "Warn once per session if rass PROGRAM is too old for generated presets."
+  (unless (gethash program eglot-typescript-preset--checked-rass-programs)
+    (puthash program t eglot-typescript-preset--checked-rass-programs)
+    (when-let* ((installed (eglot-typescript-preset--rass-version program))
+                ((version< installed eglot-typescript-preset--min-rass-version)))
+      (display-warning
+       'eglot-typescript-preset
+       (format "rassumfrassum %s at %s is older than %s, so per-server \
+settings will not apply; please upgrade it"
+               installed program eglot-typescript-preset--min-rass-version)
+       :warning))))
+
+(defun eglot-typescript-preset--rass-program ()
+  "Return the resolved rass program, warning once if it is too old."
+  (let ((program (eglot-typescript-preset--resolve-executable
+                  eglot-typescript-preset-rass-program)))
+    (eglot-typescript-preset--check-rass-version program)
+    program))
+
 (defun eglot-typescript-preset--tool-kind-from-name (name)
   "Return the known tool kind for executable NAME, or nil."
   (when name
@@ -968,8 +1003,7 @@ fall through to other project backends."
     ('rass
      (if eglot-typescript-preset-rass-command
          (append eglot-typescript-preset-rass-command nil)
-       (list (eglot-typescript-preset--resolve-executable
-              eglot-typescript-preset-rass-program)
+       (list (eglot-typescript-preset--rass-program)
              (eglot-typescript-preset--rass-preset-path
               eglot-typescript-preset-rass-tools
               eglot-typescript-preset-rass-command))))
@@ -987,8 +1021,7 @@ fall through to other project backends."
     ('rass
      (if eglot-typescript-preset-astro-rass-command
          (append eglot-typescript-preset-astro-rass-command nil)
-       (list (eglot-typescript-preset--resolve-executable
-              eglot-typescript-preset-rass-program)
+       (list (eglot-typescript-preset--rass-program)
              (eglot-typescript-preset--rass-preset-path
               eglot-typescript-preset-astro-rass-tools
               eglot-typescript-preset-astro-rass-command))))
@@ -1007,8 +1040,7 @@ fall through to other project backends."
     ('rass
      (if eglot-typescript-preset-vue-rass-command
          (append eglot-typescript-preset-vue-rass-command nil)
-       (list (eglot-typescript-preset--resolve-executable
-              eglot-typescript-preset-rass-program)
+       (list (eglot-typescript-preset--rass-program)
              (eglot-typescript-preset--rass-preset-path
               eglot-typescript-preset-vue-rass-tools
               eglot-typescript-preset-vue-rass-command))))
@@ -1027,8 +1059,7 @@ fall through to other project backends."
     ('rass
      (if eglot-typescript-preset-svelte-rass-command
          (append eglot-typescript-preset-svelte-rass-command nil)
-       (list (eglot-typescript-preset--resolve-executable
-              eglot-typescript-preset-rass-program)
+       (list (eglot-typescript-preset--rass-program)
              (eglot-typescript-preset--rass-preset-path
               eglot-typescript-preset-svelte-rass-tools
               eglot-typescript-preset-svelte-rass-command))))
@@ -1065,8 +1096,7 @@ the first match."
     ('rass
      (if eglot-typescript-preset-css-rass-command
          (append eglot-typescript-preset-css-rass-command nil)
-       (list (eglot-typescript-preset--resolve-executable
-              eglot-typescript-preset-rass-program)
+       (list (eglot-typescript-preset--rass-program)
              (eglot-typescript-preset--rass-preset-path
               eglot-typescript-preset-css-rass-tools
               eglot-typescript-preset-css-rass-command))))

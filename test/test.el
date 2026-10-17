@@ -1105,6 +1105,69 @@ the JS project boundary."
         (let ((contact (eglot-typescript-preset--server-contact nil)))
           (should (equal contact '("rass" "tslint"))))))))
 
+(defun my-test-write-fake-rass (path output &optional status)
+  "Create a fake rass at PATH that prints OUTPUT and exits with STATUS."
+  (with-temp-file path
+    (insert "#!/bin/bash\n")
+    (insert (format "printf '%%s\\n' %s\n" (shell-quote-argument output)))
+    (insert (format "exit %d\n" (or status 0))))
+  (set-file-modes path #o755))
+
+(defmacro my-test-capturing-rass-warnings (var &rest body)
+  "Evaluate BODY with fresh rass version state, collecting warnings in VAR."
+  (declare (indent 1))
+  `(let ((,var nil)
+         (eglot-typescript-preset--checked-rass-programs (make-hash-table :test 'equal)))
+     (cl-letf (((symbol-function 'display-warning)
+                (lambda (type message &rest _)
+                  (push (cons type message) ,var))))
+       ,@body
+       (setq ,var (nreverse ,var)))))
+
+(ert-deftest ts-preset--rass-version-warns-once-when-too-old ()
+  "An old rass produces one warning per program and session."
+  (my-test-with-tmp-dir tmp-dir
+    (let ((rass (expand-file-name "rass" tmp-dir)))
+      (my-test-write-fake-rass rass "rass 0.3.4")
+      (my-test-capturing-rass-warnings warnings
+        (eglot-typescript-preset--check-rass-version rass)
+        (eglot-typescript-preset--check-rass-version rass)
+        (should (= 1 (length warnings)))
+        (should (eq 'eglot-typescript-preset (caar warnings)))
+        (should (string-match-p "rassumfrassum 0\\.3\\.4 at .* older than 0\\.3\\.5"
+                                (cdar warnings)))))))
+
+(ert-deftest ts-preset--rass-version-silent-when-supported-or-unknown ()
+  "No warning for a supported rass or one whose version can't be read."
+  (my-test-with-tmp-dir tmp-dir
+    (let ((cases '(("current" "rass 0.3.5" 0)
+                   ("newer" "rass 0.4.0" 0)
+                   ("garbled" "something else" 0)
+                   ("failing" "rass 0.3.4" 2))))
+      (my-test-capturing-rass-warnings warnings
+        (dolist (case cases)
+          (let ((rass (expand-file-name (car case) tmp-dir)))
+            (my-test-write-fake-rass rass (nth 1 case) (nth 2 case))
+            (eglot-typescript-preset--check-rass-version rass)))
+        (eglot-typescript-preset--check-rass-version (expand-file-name "missing" tmp-dir))
+        (should-not warnings)))))
+
+(ert-deftest ts-preset--server-contact-rass-warns-when-too-old ()
+  "Generated rass contacts check the rass version; exact commands don't."
+  (my-test-with-tmp-dir tmp-dir
+    (my-test-with-project-env tmp-dir
+      (let ((rass (expand-file-name "old-rass" tmp-dir))
+            (eglot-typescript-preset-lsp-server 'rass))
+        (my-test-write-fake-rass rass "rass 0.3.4")
+        (let ((eglot-typescript-preset-rass-program rass))
+          (my-test-capturing-rass-warnings warnings
+            (let ((eglot-typescript-preset-rass-command ["rass" "tslint"]))
+              (eglot-typescript-preset--server-contact nil))
+            (should-not warnings)
+            (should (equal rass
+                           (car (eglot-typescript-preset--server-contact nil))))
+            (should (= 1 (length warnings)))))))))
+
 (ert-deftest ts-preset--server-contact-deno ()
   "Server contact returns deno lsp command with init options."
   (my-test-with-tmp-dir tmp-dir
