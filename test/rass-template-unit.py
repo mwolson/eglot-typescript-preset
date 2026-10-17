@@ -18,7 +18,7 @@ def ensure_rassumfrassum_stubs():
         primary = None
 
         def process_request(self, method, params, server):
-            pass
+            return params
 
         async def on_server_request(self, method, params, source):
             return None
@@ -86,7 +86,7 @@ async def diagnostic_pull_request(module):
     logic.servers = {id(server): server}
     logic.request_server = request_server
     logic.notify_client = notify_client
-    logic.document_state = {}
+    logic.documents = {}
     logic._stash_diagnostics_data = lambda _diags, _server, _state: None
 
     await logic._pull_and_stream_diags("file:///x.ts", state, False)
@@ -99,6 +99,54 @@ async def diagnostic_pull_request(module):
         "request": requests[0] if requests else None,
         "notification": notifications[0] if notifications else None,
     }
+
+
+async def neighbour_diagnostic_pulls(module, inter_file, legacy_attr):
+    logic_cls = module.logic_class()
+    server = sys.modules["rassumfrassum.frassum"].Server()
+    server.name = "tsgo"
+    server.caps = {"diagnosticProvider": {"interFileDependencies": inter_file}}
+    origin = types.SimpleNamespace(docver=1, inflight_pulls={})
+    neighbour = types.SimpleNamespace(docver=1, inflight_pulls={})
+    requests = []
+    notifications = []
+
+    async def request_server(_server, method, params):
+        requests.append(params["textDocument"]["uri"])
+        return False, {"kind": "unchanged", "resultId": "1"}
+
+    async def notify_client(method, params):
+        notifications.append(params["uri"])
+
+    logic = logic_cls.__new__(logic_cls)
+    logic.servers = {id(server): server}
+    logic.request_server = request_server
+    logic.notify_client = notify_client
+    documents = {"file:///x.ts": origin, "file:///y.ts": neighbour}
+    if legacy_attr:
+        logic.document_state = documents
+    else:
+        logic.documents = documents
+    logic._stash_diagnostics_data = lambda _diags, _server, _state: None
+
+    await logic._pull_and_stream_diags("file:///x.ts", origin, True)
+    for _ in range(5):
+        await asyncio.sleep(0.01)
+
+    return {
+        "requested": sorted(requests),
+        "notified": sorted(notifications),
+    }
+
+
+def process_request_returns_params(module):
+    logic_cls = module.logic_class()
+    server = sys.modules["rassumfrassum.frassum"].Server()
+    server.name = "primary"
+    logic = logic_cls.__new__(logic_cls)
+    logic.primary = server
+    params = {"textDocument": {"uri": "file:///x.ts"}}
+    return logic.process_request("textDocument/hover", params, server) is params
 
 
 async def unsupported_registration_response(module):
@@ -158,13 +206,17 @@ def main():
         logic = logic_cls.__new__(logic_cls)
         logic.primary = primary
 
-        primary_params = {"initializationOptions": {}}
-        logic.process_request("initialize", primary_params, primary)
-        primary_got = primary_params.get("initializationOptions", {})
+        primary_params = logic.process_request(
+            "initialize", {"initializationOptions": {}}, primary
+        )
+        primary_got = (primary_params or {}).get("initializationOptions", {})
 
-        secondary_params = {"initializationOptions": {}}
-        logic.process_request("initialize", secondary_params, secondary)
-        secondary_got = secondary_params.get("initializationOptions", {})
+        secondary_params = logic.process_request(
+            "initialize", {"initializationOptions": {}}, secondary
+        )
+        secondary_got = (secondary_params or {}).get(
+            "initializationOptions", {}
+        )
 
         init_options_scoping = {
             "primaryGotOptions": bool(primary_got),
@@ -182,6 +234,18 @@ def main():
                 "initOptionsScoping": init_options_scoping,
                 "diagnosticPullRequest": asyncio.run(
                     diagnostic_pull_request(module)
+                ),
+                "neighbourPulls": asyncio.run(
+                    neighbour_diagnostic_pulls(module, True, False)
+                ),
+                "neighbourPullsLegacyAttr": asyncio.run(
+                    neighbour_diagnostic_pulls(module, True, True)
+                ),
+                "neighbourPullsSingleFile": asyncio.run(
+                    neighbour_diagnostic_pulls(module, False, False)
+                ),
+                "processRequestReturnsParams": process_request_returns_params(
+                    module
                 ),
                 "unsupportedRegistrationResponse": asyncio.run(
                     unsupported_registration_response(module)

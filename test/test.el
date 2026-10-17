@@ -904,6 +904,16 @@ the JS project boundary."
             (should (equal .initOptionsScoping :null))
             (should (equal .unsupportedRegistrationResponse :null))
             (should .hasLogicClass)
+            (should (eq .processRequestReturnsParams t))
+            (let-alist .neighbourPulls
+              (should (equal .requested ["file:///x.ts" "file:///y.ts"]))
+              (should (equal .notified ["file:///x.ts"])))
+            (let-alist .neighbourPullsLegacyAttr
+              (should (equal .requested ["file:///x.ts" "file:///y.ts"]))
+              (should (equal .notified ["file:///x.ts"])))
+            (let-alist .neighbourPullsSingleFile
+              (should (equal .requested ["file:///x.ts"]))
+              (should (equal .notified ["file:///x.ts"])))
             (let-alist .diagnosticPullRequest
               (should (equal .request.method "textDocument/diagnostic"))
               (should-not (assoc 'previousResultId .request.params))

@@ -214,6 +214,11 @@ class GeneratedTypeScriptLogic(LspLogic):
                     doc_state.inflight_pulls[id(server)] = result_id
                 else:
                     doc_state.inflight_pulls.pop(id(server), None)
+                kind = pull_response.get("kind")
+                # The client keeps a neighbour's diagnostics while its
+                # version is unchanged, so skip re-sending them.
+                if kind == "unchanged" and uri != orig_uri:
+                    return
                 diagnostics = pull_response.get("items", [])
                 self._stash_diagnostics_data(diagnostics, server, doc_state)
                 for diagnostic in diagnostics:
@@ -222,18 +227,27 @@ class GeneratedTypeScriptLogic(LspLogic):
                     "uri": uri,
                     "version": doc_state.docver,
                     "token": f"{server.name}-{id(server)}",
-                    "kind": pull_response.get("kind"),
+                    "kind": kind,
                 }
                 if diagnostics:
                     params["diagnostics"] = diagnostics
                 await self.notify_client("$/streamDiagnostics", params)
 
+        # rass 0.3.5 renamed ``document_state`` to ``documents``.
+        documents = getattr(self, "documents", None)
+        if documents is None:
+            documents = self.document_state
         for server in self.servers.values():
-            if not server.caps.get("diagnosticProvider"):
+            if not (provider := server.caps.get("diagnosticProvider")):
                 continue
             asyncio.create_task(doit(server, orig_uri, state))
-            if include_neighbours:
-                for uri, doc_state in self.document_state.items():
+            # Neighbours can only change if the server's diagnostics
+            # depend on other files.
+            inter_file = not isinstance(provider, dict) or provider.get(
+                "interFileDependencies", True
+            )
+            if include_neighbours and inter_file:
+                for uri, doc_state in documents.items():
                     if uri != orig_uri:
                         asyncio.create_task(doit(server, uri, doc_state))
 
